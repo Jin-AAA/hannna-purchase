@@ -7,6 +7,9 @@ import {
   PackageCheck, Plus, Search, Settings, ShoppingBag, Trash2, Truck,
   UserRound, UsersRound, X, Pencil, Download, Database, Save, AlertTriangle, LogOut, LockKeyhole,
 } from "lucide-react";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut, updatePassword } from "firebase/auth";
+import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { auth, db } from "./firebase";
 
 type GroupStatus = "收單中" | "待到貨" | "部分到貨" | "整理出貨" | "部分出貨" | "已完成";
 type Currency = "KRW" | "JPY" | "TWD";
@@ -34,64 +37,13 @@ const currencyInfo: Record<Currency, { label: string; symbol: string }> = {
   JPY: { label: "日幣 JPY", symbol: "¥" },
   TWD: { label: "新台幣 TWD", symbol: "NT$" },
 };
-const initialFriends: Friend[] = [
-  { id: 1, name: "Jiin", note: "可與不同團商品合併處理" },
-  { id: 2, name: "Rin", note: "" },
-  { id: 3, name: "海敏", note: "" },
-  { id: 4, name: "葡萄", note: "" },
-  { id: 5, name: "小文", note: "通常等商品到齊後再一起出貨" },
-];
-const initialPayments: PaymentRecord[] = [
-  { id: 1, friend: "Jiin", amount: 1000, date: "2026/07/18", method: "銀行轉帳", note: "7 月商品款", orderIds: [101] },
-  { id: 2, friend: "Rin", amount: 800, date: "2026/07/16", method: "LINE Pay", note: "先付部分款項", orderIds: [102] },
-  { id: 3, friend: "海敏", amount: 1340, date: "2026/07/12", method: "銀行轉帳", note: "已付清", orderIds: [301] },
-];
-const initialExpenses: ExpenseRecord[] = [
-  { id: 1, category: "商品款", amount: 4280, date: "2026/07/03", group: "ESON 7月周邊", note: "官方商店付款" },
-  { id: 2, category: "國際運費", amount: 1260, date: "2026/07/15", group: "PLAVE JP POP-UP", note: "第一箱" },
-];
-const initialParcels: Parcel[] = [
-  { id: 1, code: "SHIP-001", friend: "海敏", orderIds: [301], method: "賣貨便", shippingFee: 38, tracking: "FAMI26071201", date: "2026/07/12", note: "已通知取貨", status: "已出貨" },
-];
-const initialWaybills: Waybill[] = [{ id: 1, code: "INTL-001", country: "日本", tracking: "JP-CONSOL-0720", items: [{ groupId: 2, orderId: 201, weightG: 180 }], totalWeightG: 260, freightTwd: 420, freightPayer: "我自行負擔", freightFriend: "", freightReceivableTwd: 0, destination: "寄到我這裡", recipientFriend: "", status: "已申請運回", appliedDate: "2026/07/20", arrivedDate: "", note: "示範運單" }];
+const initialFriends: Friend[] = [];
+const initialPayments: PaymentRecord[] = [];
+const initialExpenses: ExpenseRecord[] = [];
+const initialParcels: Parcel[] = [];
+const initialWaybills: Waybill[] = [];
 const friends = initialFriends.map(friend => friend.name);
-const initialGroups: Group[] = [
-  {
-    id: 1, name: "ESON 7月周邊", saleDate: "2026/07/01", currency: "KRW", status: "收單中",
-    products: [
-      { id: 11, name: "隨機小卡", unitPrice: 12000 }, { id: 12, name: "壓克力立牌", unitPrice: 28000 },
-      { id: 13, name: "照片組", unitPrice: 18000 }, { id: 14, name: "鑰匙圈", unitPrice: 22000 },
-    ],
-    giftRules: [{ id: 1101, threshold: 50000, giftName: "未公開自拍小卡", cumulative: true }, { id: 1102, threshold: 100000, giftName: "限定明信片", cumulative: false }],
-    orders: [
-      { id: 101, code: "ORDER 01", friend: "Jiin", lines: [{ productId: 11, quantity: 2, receivableTwd: 480 }, { productId: 12, quantity: 1, receivableTwd: 760 }], receivableTwd: 1240 },
-      { id: 102, code: "ORDER 02", friend: "Rin", lines: [{ productId: 13, quantity: 2, receivableTwd: 780 }, { productId: 14, quantity: 1, receivableTwd: 610 }], receivableTwd: 1390 },
-    ],
-  },
-  {
-    id: 2, name: "PLAVE JP POP-UP", saleDate: "2026/06/25", currency: "JPY", status: "部分到貨",
-    products: [
-      { id: 21, name: "角色徽章", unitPrice: 900 }, { id: 22, name: "壓克力吊飾", unitPrice: 1600 }, { id: 23, name: "明信片套組", unitPrice: 1200 },
-    ],
-    giftRules: [{ id: 2101, threshold: 3000, giftName: "POP-UP 特典卡", cumulative: true }],
-    orders: [
-      { id: 201, code: "ORDER 01", friend: "Jiin", lines: [{ productId: 21, quantity: 3, receivableTwd: 620 }, { productId: 22, quantity: 1, receivableTwd: 430 }], receivableTwd: 1050 },
-      { id: 202, code: "ORDER 02", friend: "小文", lines: [{ productId: 23, quantity: 2, receivableTwd: 530 }], receivableTwd: 530 },
-    ],
-  },
-  {
-    id: 3, name: "SUPER JUNIOR 83z 高雄周邊", saleDate: "2026/06/10", currency: "TWD", status: "部分出貨",
-    products: [
-      { id: 31, name: "T-shirt", unitPrice: 990 }, { id: 32, name: "應援毛巾", unitPrice: 650 },
-      { id: 33, name: "場限小卡", unitPrice: 350 }, { id: 34, name: "手燈吊飾", unitPrice: 520 }, { id: 35, name: "照片組", unitPrice: 450 },
-    ],
-    giftRules: [],
-    orders: [
-      { id: 301, code: "ORDER 01", friend: "海敏", lines: [{ productId: 31, quantity: 1, receivableTwd: 990 }, { productId: 33, quantity: 2, receivableTwd: 700 }], receivableTwd: 1690 },
-      { id: 302, code: "ORDER 02", friend: "Jiin", lines: [{ productId: 32, quantity: 1, receivableTwd: 650 }, { productId: 34, quantity: 1, receivableTwd: 520 }, { productId: 35, quantity: 1, receivableTwd: 450 }], receivableTwd: 1620 },
-    ],
-  },
-];
+const initialGroups: Group[] = [];
 const navItems = [
   [LayoutDashboard, "總覽"], [UsersRound, "代購團"], [ClipboardList, "訂單明細"], [Globe2, "國際運單"],
   [UserRound, "朋友名單"], [CircleDollarSign, "款項紀錄"], [Truck, "出貨管理"], [Settings, "設定"],
@@ -111,8 +63,8 @@ const earnedGifts = (group: Group, total: number) => group.giftRules.flatMap(rul
 export default function Home() {
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [loginError, setLoginError] = useState("");
-  const [credentials, setCredentials] = useState({ username: "hannna", password: "0312" });
   const [groups, setGroups] = useState(initialGroups);
   const [friendList, setFriendList] = useState(initialFriends);
   const [activeNav, setActiveNav] = useState("代購團");
@@ -142,7 +94,7 @@ export default function Home() {
   const [expenses, setExpenses] = useState(initialExpenses);
   const [paymentTab, setPaymentTab] = useState<"應收款項" | "收款紀錄" | "支出紀錄">("應收款項");
   const [paymentModal, setPaymentModal] = useState<"income" | "expense" | null>(null);
-  const [paymentFriend, setPaymentFriend] = useState(initialFriends[0].name);
+  const [paymentFriend, setPaymentFriend] = useState("");
   const [paymentOrders, setPaymentOrders] = useState<number[]>([]);
   const [parcels, setParcels] = useState(initialParcels);
   const [parcelModalOpen, setParcelModalOpen] = useState(false);
@@ -156,12 +108,38 @@ export default function Home() {
   const [waybillDestination, setWaybillDestination] = useState<Waybill["destination"]>("寄到我這裡");
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("hana-admin-credentials");
-    if (saved) try { setCredentials(JSON.parse(saved)); } catch { /* keep defaults */ }
-    const expiresAt = Number(window.localStorage.getItem("hana-admin-session") || 0);
-    setIsAuthenticated(expiresAt > Date.now());
-    setAuthChecked(true);
+    return onAuthStateChanged(auth, async user => {
+      setIsAuthenticated(Boolean(user));
+      setAuthChecked(true);
+      if (!user) { setDataLoaded(false); return; }
+      try {
+        const snapshot = await getDoc(doc(db, "admin", "state"));
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          setGroups((data.groups as Group[]) ?? []);
+          setFriendList((data.friends as Friend[]) ?? []);
+          setPayments((data.payments as PaymentRecord[]) ?? []);
+          setExpenses((data.expenses as ExpenseRecord[]) ?? []);
+          setParcels((data.parcels as Parcel[]) ?? []);
+          setWaybills((data.waybills as Waybill[]) ?? []);
+        }
+        setDataLoaded(true);
+      } catch {
+        setLoginError("無法讀取雲端資料，請確認網路後重新整理");
+      }
+    });
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !dataLoaded) return;
+    const timer = window.setTimeout(() => {
+      void setDoc(doc(db, "admin", "state"), {
+        groups, friends: friendList, payments, expenses, parcels, waybills,
+        updatedAt: serverTimestamp(),
+      }).catch(() => showNotice("雲端儲存失敗，請確認網路連線"));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [groups, friendList, payments, expenses, parcels, waybills, isAuthenticated, dataLoaded]);
 
   const selectedGroup = groups.find(group => group.id === selectedGroupId) ?? null;
   const visibleGroups = useMemo(() => groups.filter(group =>
@@ -185,23 +163,26 @@ export default function Home() {
   );
 
   function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 2600); }
-  function login(event: FormEvent<HTMLFormElement>) {
+  async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    if (String(form.get("username")) !== credentials.username || String(form.get("password")) !== credentials.password) return setLoginError("帳號或密碼不正確，請再確認一次");
-    const expiresAt = Date.now() + 60 * 60 * 1000;
-    window.localStorage.setItem("hana-admin-session", String(expiresAt));
-    document.cookie = `hana_admin_session=${expiresAt}; Max-Age=3600; Path=/; SameSite=Strict`;
-    setLoginError(""); setIsAuthenticated(true);
+    const username = String(form.get("username") || "").trim().toLowerCase();
+    const password = String(form.get("password") || "");
+    if (username !== "hannna") return setLoginError("帳號或密碼不正確，請再確認一次");
+    try {
+      setLoginError("");
+      await signInWithEmailAndPassword(auth, `${username}@hannna-purchase.local`, password);
+    } catch {
+      setLoginError("帳號或密碼不正確，請再確認一次");
+    }
   }
-  function logout() {
-    window.localStorage.removeItem("hana-admin-session");
-    document.cookie = "hana_admin_session=; Max-Age=0; Path=/; SameSite=Strict";
-    setIsAuthenticated(false);
+  async function logout() {
+    await signOut(auth);
   }
-  function saveCredentials(next: { username: string; password: string }) {
-    setCredentials(next); window.localStorage.setItem("hana-admin-credentials", JSON.stringify(next));
-    showNotice("登入帳號與密碼已更新");
+  async function savePassword(password: string) {
+    if (!auth.currentUser) return;
+    try { await updatePassword(auth.currentUser, password); showNotice("登入密碼已更新"); }
+    catch { showNotice("密碼更新失敗，請先重新登入後再試一次"); }
   }
   function openGroupModal() {
     setEditingGroup(false);
@@ -333,7 +314,7 @@ export default function Home() {
     setWaybillModalOpen(false); showNotice(status === "已到貨" ? `已建立運單，並同步更新 ${items.length} 份訂單為已到貨` : "已建立國際運單並標示運回中");
   }
 
-  if (!authChecked) return <main className="login-screen" />;
+  if (!authChecked || (isAuthenticated && !dataLoaded)) return <main className="login-screen" />;
   if (!isAuthenticated) return <LoginPage onSubmit={login} error={loginError} />;
   return <main className="app-shell">
     <aside className={`sidebar ${mobileNav ? "mobile-open" : ""}`}>
@@ -364,7 +345,7 @@ export default function Home() {
             <div className="table-footer">點選任一代購團，進入新增個別訂單</div>
           </section>
         </>}
-        {activeNav === "設定" && <div className="settings-overlay"><SettingsPage groups={groups} friends={friendList} payments={payments} expenses={expenses} parcels={parcels} credentials={credentials} onSaveCredentials={saveCredentials} onNotice={showNotice} /></div>}
+        {activeNav === "設定" && <div className="settings-overlay"><SettingsPage groups={groups} friends={friendList} payments={payments} expenses={expenses} parcels={parcels} onSavePassword={savePassword} onNotice={showNotice} /></div>}
       </div>
     </section>
 
@@ -482,10 +463,10 @@ function FriendForm({ friend, onSubmit, onCancel, onDelete }: { friend?: Friend;
 function PaymentsPage({ friends, groups, waybills, payments, expenses, tab, setTab, onIncome, onExpense }: { friends: Friend[]; groups: Group[]; waybills: Waybill[]; payments: PaymentRecord[]; expenses: ExpenseRecord[]; tab: "應收款項" | "收款紀錄" | "支出紀錄"; setTab: (tab: "應收款項" | "收款紀錄" | "支出紀錄") => void; onIncome: (friend?: string) => void; onExpense: () => void }) {
   const receivables = friends.map(friend => { const orders = groups.flatMap(group => group.orders.filter(order => order.friend === friend.name).map(order => ({group,order}))); const freight=waybills.filter(item=>item.freightFriend===friend.name&&item.freightReceivableTwd>0); const due = orders.reduce((sum,{order}) => sum + order.receivableTwd, 0)+freight.reduce((sum,item)=>sum+item.freightReceivableTwd,0); const paid = payments.filter(record => record.friend === friend.name).reduce((sum,record) => sum + record.amount,0); return { friend, orders, freight, due, paid, balance: Math.max(0,due-paid) }; }).filter(item => item.orders.length > 0||item.freight.length>0);
   const totalDue = receivables.reduce((sum,item) => sum + item.due,0); const totalPaid = payments.reduce((sum,item) => sum + item.amount,0); const totalExpense = expenses.reduce((sum,item) => sum + item.amount,0);
-  return <><div className="section-heading"><div><span className="eyebrow">PAYMENTS</span><h2>款項紀錄</h2><p>分開管理朋友應付金額、實際收款與代購支出</p></div><button className="mobile-add" onClick={() => onIncome()}><Plus size={18}/>新增收款</button></div>
+  return <><div className="section-heading"><div><span className="eyebrow">PAYMENTS</span><h2>款項紀錄</h2><p>分開管理朋友應付金額、實際收款與代購支出</p></div><button className="mobile-add" onClick={onIncome}><Plus size={18}/>新增收款</button></div>
     <section className="stats-grid payment-stats"><StatCard icon={<ClipboardList/>} tone="ice" label="應收總額" value={`NT$${totalDue.toLocaleString()}`} note="依各訂單應收台幣加總"/><StatCard icon={<CircleDollarSign/>} tone="mint" label="已收款" value={`NT$${totalPaid.toLocaleString()}`} note={`${payments.length} 筆實際收款`}/><StatCard icon={<Bell/>} tone="amber" label="尚未收款" value={`NT$${Math.max(0,totalDue-totalPaid).toLocaleString()}`} note={`${receivables.filter(item=>item.balance>0).length} 位朋友待結清`}/><StatCard icon={<ShoppingBag/>} tone="lilac" label="已記錄支出" value={`NT$${totalExpense.toLocaleString()}`} note={`${expenses.length} 筆支出紀錄`}/></section>
     <section className="groups-section payments-section"><div className="payment-tabs">{(["應收款項","收款紀錄","支出紀錄"] as const).map(item=><button key={item} className={tab===item?"active":""} onClick={()=>setTab(item)}>{item}</button>)}</div>
-      <div className="payment-panel-head"><div><h3>{tab}</h3><span>{tab==="應收款項"?"查看每位朋友目前的結款進度":tab==="收款紀錄"?"保留每一次實際收到款項的日期與方式":"記錄商品款、國際運費、關稅與其他支出"}</span></div><button className="secondary-add" onClick={() => tab==="支出紀錄" ? onExpense() : onIncome()}><Plus size={16}/>{tab==="支出紀錄"?"新增支出":"新增收款"}</button></div>
+      <div className="payment-panel-head"><div><h3>{tab}</h3><span>{tab==="應收款項"?"查看每位朋友目前的結款進度":tab==="收款紀錄"?"保留每一次實際收到款項的日期與方式":"記錄商品款、國際運費、關稅與其他支出"}</span></div><button className="secondary-add" onClick={tab==="支出紀錄"?onExpense:onIncome}><Plus size={16}/>{tab==="支出紀錄"?"新增支出":"新增收款"}</button></div>
       {tab==="應收款項" ? <div className="receivable-grid">{receivables.map(item=><article key={item.friend.id}><div className="receivable-head"><div className="friend-avatar">{item.friend.name.slice(0,1)}</div><div><h3>{item.friend.name}</h3><span>{item.orders.length} 筆商品款・{item.freight.length} 筆國際運費</span></div><OrderState value={item.balance===0?"已付款":item.paid>0?"部分付款":"未付款"}/></div><div className="receivable-orders">{item.orders.map(({group,order})=><div key={order.id}><span><b>商品款・{group.name}</b><small>{order.code}</small></span><strong>NT${order.receivableTwd.toLocaleString()}</strong></div>)}{item.freight.map(fee=><div key={`freight-${fee.id}`}><span><b>國際運費・{fee.code}</b><small>{fee.country}・{fee.destination}</small></span><strong>NT${fee.freightReceivableTwd.toLocaleString()}</strong></div>)}</div><div className="amount-row"><span>應收<strong>NT${item.due.toLocaleString()}</strong></span><span>已收<strong>NT${item.paid.toLocaleString()}</strong></span><span>尚欠<strong className={item.balance?"unpaid":"paid"}>NT${item.balance.toLocaleString()}</strong></span></div><div className="payment-progress"><i style={{width:`${item.due?Math.min(100,item.paid/item.due*100):0}%`}}/></div><button onClick={()=>onIncome(item.friend.name)}>新增這位朋友的收款 <ChevronRight size={16}/></button></article>)}</div> : <div className="table-wrap"><table className="payment-table"><thead><tr>{tab==="收款紀錄"?<><th>收款日期</th><th>付款人</th><th>支付款項</th><th>付款方式／備註</th><th>收款金額</th></>:<><th>支出日期</th><th>類別</th><th>所屬代購團</th><th>備註</th><th>支出金額</th></>}</tr></thead><tbody>{tab==="收款紀錄"?payments.map(record=><tr key={record.id}><td>{record.date}</td><td><strong>{record.friend}</strong></td><td>{[...groups.flatMap(group=>group.orders.filter(order=>record.orderIds.includes(order.id)).map(()=>`商品款・${group.name}`)),...waybills.filter(item=>record.orderIds.includes(-item.id)).map(item=>`國際運費・${item.code}`)].join("、")||"—"}</td><td>{record.method}{record.note?`・${record.note}`:""}</td><td><strong className="income-money">+ NT${record.amount.toLocaleString()}</strong></td></tr>):expenses.map(record=><tr key={record.id}><td>{record.date}</td><td><span className="expense-category">{record.category}</span></td><td>{record.group}</td><td>{record.note||"—"}</td><td><strong className="expense-money">− NT${record.amount.toLocaleString()}</strong></td></tr>)}</tbody></table></div>}
       <div className="table-footer">應收金額分別來自品項商品款與國際運單運費；朋友自行付清或妳自行負擔的款項不會列入</div></section></>;
 }
@@ -543,11 +524,10 @@ function LoginPage({ onSubmit, error }: { onSubmit: (event: FormEvent<HTMLFormEl
     <small>登入狀態會在此瀏覽器保留 1 小時</small>
   </section></main>;
 }
-function SettingsPage({ groups, friends, payments, expenses, parcels, credentials, onSaveCredentials, onNotice }: { groups: Group[]; friends: Friend[]; payments: PaymentRecord[]; expenses: ExpenseRecord[]; parcels: Parcel[]; credentials: { username: string; password: string }; onSaveCredentials: (value: { username: string; password: string }) => void; onNotice: (message: string) => void }) {
+function SettingsPage({ groups, friends, payments, expenses, parcels, onSavePassword, onNotice }: { groups: Group[]; friends: Friend[]; payments: PaymentRecord[]; expenses: ExpenseRecord[]; parcels: Parcel[]; onSavePassword: (password: string) => Promise<void>; onNotice: (message: string) => void }) {
   const [adminName, setAdminName] = useState("Jiin");
   const [siteName, setSiteName] = useState("哈娜的小車車");
-  const [username, setUsername] = useState(credentials.username);
-  const [password, setPassword] = useState(credentials.password);
+  const [password, setPassword] = useState("");
   const [orderPrefix, setOrderPrefix] = useState("ORDER");
   const [thousands, setThousands] = useState(true);
   const [paymentMethods, setPaymentMethods] = useState(["銀行轉帳", "LINE Pay"]);
@@ -562,10 +542,10 @@ function SettingsPage({ groups, friends, payments, expenses, parcels, credential
         <SettingsCard icon={<Settings/>} title="基本設定" note="調整後台中顯示的名稱">
           <div className="settings-form two"><label>後台名稱<input value={siteName} onChange={e=>setSiteName(e.target.value)}/></label><label>管理者顯示名稱<input value={adminName} onChange={e=>setAdminName(e.target.value)}/></label></div>
         </SettingsCard>
-        <SettingsCard icon={<LockKeyhole/>} title="登入與安全" note="修改這個後台使用的登入帳號與密碼">
-          <div className="settings-form two"><label>登入帳號<input value={username} onChange={e=>setUsername(e.target.value)} autoComplete="username"/></label><label>新密碼<input value={password} onChange={e=>setPassword(e.target.value)} type="password" autoComplete="new-password"/></label></div>
-          <button className="credential-save" onClick={()=> username.trim() && password ? onSaveCredentials({username:username.trim(),password}) : onNotice("帳號與密碼都不能留空")}><Save size={16}/>更新登入資料</button>
-          <p className="security-note">目前為介面測試版；正式串接資料庫時會改用安全的身分驗證與加密密碼。</p>
+        <SettingsCard icon={<LockKeyhole/>} title="登入與安全" note="Firebase 安全驗證與管理員專用權限">
+          <div className="settings-form two"><label>登入帳號<input value="hannna" readOnly autoComplete="username"/></label><label>新密碼<input value={password} onChange={e=>setPassword(e.target.value)} type="password" minLength={6} placeholder="至少 6 個字元" autoComplete="new-password"/></label></div>
+          <button className="credential-save" onClick={()=> password.length >= 6 ? void onSavePassword(password).then(()=>setPassword("")) : onNotice("新密碼至少需要 6 個字元")}><Save size={16}/>更新登入密碼</button>
+          <p className="security-note">帳密由 Firebase Authentication 驗證；雲端資料僅限此管理員帳號讀寫。</p>
         </SettingsCard>
         <SettingsCard icon={<CircleDollarSign/>} title="款項與顯示格式" note="設定新增收款時使用的常用選項">
           <div className="settings-form two"><label>訂單編號前綴<input value={orderPrefix} onChange={e=>setOrderPrefix(e.target.value.toUpperCase())}/><small>預覽：{orderPrefix || "ORDER"} 01</small></label><label>金額顯示<select defaultValue="original"><option value="original">依代購團原幣顯示</option><option value="twd">統一顯示新台幣</option></select></label></div>
@@ -578,9 +558,9 @@ function SettingsPage({ groups, friends, payments, expenses, parcels, credential
         </SettingsCard>
       </div>
       <aside className="settings-side">
-        <section className="data-summary"><div className="settings-card-title"><span><Database/></span><div><h3>目前資料</h3><p>介面確認版的示範資料摘要</p></div></div><div className="data-count-grid"><div><strong>{groups.length}</strong><span>代購團</span></div><div><strong>{orderCount}</strong><span>訂單</span></div><div><strong>{friends.length}</strong><span>朋友</span></div><div><strong>{parcels.length}</strong><span>包裹</span></div></div><p className="record-total">共 {records} 筆相關紀錄</p></section>
+        <section className="data-summary"><div className="settings-card-title"><span><Database/></span><div><h3>目前資料</h3><p>Firestore 雲端資料摘要</p></div></div><div className="data-count-grid"><div><strong>{groups.length}</strong><span>代購團</span></div><div><strong>{orderCount}</strong><span>訂單</span></div><div><strong>{friends.length}</strong><span>朋友</span></div><div><strong>{parcels.length}</strong><span>包裹</span></div></div><p className="record-total">共 {records} 筆相關紀錄</p></section>
         <section className="export-card"><div className="settings-card-title"><span><Download/></span><div><h3>資料匯出與備份</h3><p>下載目前後台資料</p></div></div><button onClick={()=>onNotice("已準備匯出 JSON 示範檔")}><Download size={17}/>匯出 JSON</button><button onClick={()=>onNotice("已準備匯出 CSV 示範檔")}><Download size={17}/>匯出 CSV</button><small>正式串接資料庫後，匯出檔才會包含實際建立的完整資料。</small></section>
-        <section className="danger-zone"><div className="settings-card-title"><span><AlertTriangle/></span><div><h3>危險操作</h3><p>執行前會再次確認</p></div></div><button onClick={()=>onNotice("介面確認版不會實際清除資料")}><Trash2 size={16}/>清除全部示範資料</button><small>正式版會加入二次確認，不會點一下就立即刪除。</small></section>
+        <section className="danger-zone"><div className="settings-card-title"><span><AlertTriangle/></span><div><h3>資料安全</h3><p>正式資料已啟用雲端同步</p></div></div><small>為避免誤刪，第一階段暫不提供一鍵清除全部資料。</small></section>
       </aside>
     </div>
   </>;

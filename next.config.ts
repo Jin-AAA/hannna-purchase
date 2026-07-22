@@ -10,8 +10,6 @@ const nextConfig: NextConfig = {
         assetPrefix: "/hannna-purchase/",
         trailingSlash: true,
         images: { unoptimized: true },
-        // The Pages export does not use the Cloudflare-only worker/database
-        // examples, whose runtime types are supplied by the Sites build.
         typescript: { ignoreBuildErrors: true },
       }
     : {}),
