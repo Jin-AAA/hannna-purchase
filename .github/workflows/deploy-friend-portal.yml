@@ -1,0 +1,51 @@
+name: Deploy friend portal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "friend-portal/**"
+      - ".github/workflows/deploy-friend-portal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: friend-portal-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: friend-portal
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: friend-portal/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          VITE_FRIEND_AUTH_API: https://hannna-friend-auth.eszwaq951.workers.dev
+        run: npm run build
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_HANNNA_PURCHASE }}
+          projectId: hannna-purchase
+          channelId: live
+          entryPoint: friend-portal
+
