@@ -1,0 +1,17 @@
+{
+  "name": "hannna-friend-auth-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "bundle:check": "CI=1 XDG_CONFIG_HOME=/tmp/wrangler-config WRANGLER_LOG_PATH=/tmp/hannna-friend-auth-wrangler.log wrangler deploy --dry-run --config ./wrangler.toml --outdir ./dist"
+  },
+  "dependencies": {
+    "jose": "^6.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.92.0"
+  }
+}

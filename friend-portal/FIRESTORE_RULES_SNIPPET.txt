@@ -1,0 +1,5 @@
+match /friendViews/{friendId} {
+  allow read: if request.auth != null
+              && request.auth.uid == resource.data.authUid;
+  allow write: if false;
+}

@@ -1,0 +1,13 @@
+name = "hannna-friend-auth"
+main = "src/index.ts"
+compatibility_date = "2026-07-20"
+
+[vars]
+FIREBASE_PROJECT_ID = "hannna-purchase"
+ADMIN_ORIGIN = "https://jin-aaa.github.io"
+FRIEND_ORIGIN = "https://hannna-orders.web.app"
+
+# These are configured as Worker secrets before deployment:
+# FIREBASE_CLIENT_EMAIL
+# FIREBASE_PRIVATE_KEY
+# ADMIN_UID

@@ -22,7 +22,8 @@ type ArrivalStatus = "未到貨" | "部分到貨" | "已到貨";
 type ShippingStatus = "待到貨" | "待出貨" | "已出貨";
 type Order = { id: number; code: string; friend: string; lines: OrderLine[]; receivableTwd: number; payment?: PaymentStatus; arrival?: ArrivalStatus; shipping?: ShippingStatus };
 type Group = { id: number; name: string; saleDate: string; currency: Currency; status: GroupStatus; products: Product[]; giftRules: GiftRule[]; orders: Order[] };
-type Friend = { id: number; name: string; note: string };
+type FriendPortalStatus = "尚未設定" | "已設定" | "已停用";
+type Friend = { id: number; name: string; note: string; portalNote?: string; portalStatus?: FriendPortalStatus; lastLoginAt?: string };
 type PaymentRecord = { id: number; friend: string; amount: number; date: string; method: string; note: string; orderIds: number[] };
 type ExpenseRecord = { id: number; category: string; amount: number; date: string; group: string; note: string };
 type DeliveryMethod = "面交" | "賣貨便";
@@ -62,6 +63,7 @@ const earnedGifts = (group: Group, total: number) => group.giftRules.flatMap(rul
   return count > 0 ? [{ ...rule, count }] : [];
 });
 const withoutUndefined = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const friendAuthApi = process.env.NEXT_PUBLIC_FRIEND_AUTH_API?.replace(/\/$/, "") ?? "";
 
 export default function Home() {
   const [authChecked, setAuthChecked] = useState(false);
@@ -145,6 +147,31 @@ export default function Home() {
     }, 350);
     return () => window.clearTimeout(timer);
   }, [groups, friendList, payments, expenses, parcels, waybills, settings, isAuthenticated, dataLoaded]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !dataLoaded) return;
+    const timer = window.setTimeout(() => {
+      friendList.forEach(friend => {
+        const friendOrders = groups.flatMap(group => {
+          const orders = group.orders.filter(order => order.friend === friend.name);
+          return orders.length ? [{ id: group.id, name: group.name, saleDate: group.saleDate, currency: group.currency, status: group.status, products: group.products, orders }] : [];
+        });
+        const orderIds = new Set(friendOrders.flatMap(group => group.orders.map(order => order.id)));
+        const publicWaybills = waybills.flatMap(waybill => {
+          const items = waybill.items.filter(item => orderIds.has(item.orderId));
+          return items.length ? [{ id: waybill.id, code: waybill.code, country: waybill.country, tracking: waybill.tracking, items, destination: waybill.destination, status: waybill.status, appliedDate: waybill.appliedDate, arrivedDate: waybill.arrivedDate }] : [];
+        });
+        const publicParcels = parcels.flatMap(parcel => {
+          const orderIdsForFriend = parcel.orderIds.filter(orderId => orderIds.has(orderId));
+          return orderIdsForFriend.length ? [{ id: parcel.id, code: parcel.code, orderIds: orderIdsForFriend, method: parcel.method, shippingFee: parcel.shippingFee, tracking: parcel.tracking, date: parcel.date, status: parcel.status }] : [];
+        });
+        const publicPayments = payments.filter(record => record.friend === friend.name).map(({ id, amount, date, method, orderIds: paidOrderIds }) => ({ id, amount, date, method, orderIds: paidOrderIds }));
+        void setDoc(doc(db, "friendViews", String(friend.id)), withoutUndefined({ friendId: friend.id, authUid: `friend-${friend.id}`, name: friend.name, portalStatus: friend.portalStatus ?? "尚未設定", portalNote: friend.portalNote ?? "", groups: friendOrders, payments: publicPayments, waybills: publicWaybills, parcels: publicParcels, updatedAt: new Date().toISOString() }))
+          .catch(() => showNotice("朋友端資料同步失敗，請稍後再試"));
+      });
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [groups, friendList, payments, parcels, waybills, isAuthenticated, dataLoaded]);
 
   const selectedGroup = groups.find(group => group.id === selectedGroupId) ?? null;
   const visibleGroups = useMemo(() => groups.filter(group =>
@@ -302,9 +329,21 @@ export default function Home() {
   function saveFriend(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const value: Friend = { id: editingFriendId ?? Date.now(), name: String(form.get("friendName") || "未命名"), note: String(form.get("note") || "") };
+    const existing = friendList.find(friend => friend.id === editingFriendId);
+    const value: Friend = { id: editingFriendId ?? Date.now(), name: String(form.get("friendName") || "未命名"), note: String(form.get("note") || ""), portalNote: String(form.get("portalNote") || ""), portalStatus: existing?.portalStatus ?? "尚未設定", lastLoginAt: existing?.lastLoginAt };
     setFriendList(current => editingFriendId ? current.map(friend => friend.id === editingFriendId ? value : friend) : [value, ...current]);
     setFriendModalOpen(false); showNotice(`${editingFriendId ? "已更新" : "已新增"}朋友「${value.name}」`);
+  }
+  async function manageFriendAccount(friendId: number, action: "password" | "suspend" | "resume", password?: string) {
+    if (!friendAuthApi || !auth.currentUser) return showNotice("朋友登入驗證服務尚未設定，正式啟用前會完成串接");
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const response = await fetch(`${friendAuthApi}/admin/friends/${friendId}/${action}`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(password ? { password } : {}) });
+      if (!response.ok) throw new Error("request failed");
+      const nextStatus: FriendPortalStatus = action === "suspend" ? "已停用" : "已設定";
+      setFriendList(current => current.map(friend => friend.id === friendId ? { ...friend, portalStatus: nextStatus } : friend));
+      showNotice(action === "password" ? "朋友密碼已重新設定" : action === "suspend" ? "已暫停朋友登入" : "已恢復朋友登入");
+    } catch { showNotice("帳號設定失敗，請確認網路後再試一次"); }
   }
   function savePayment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = new FormData(event.currentTarget);
@@ -419,7 +458,7 @@ export default function Home() {
       {selectedGroup.giftRules.length > 0 && <div className="earned-gifts"><div><Gift size={18} /><strong>這一單可獲得的滿額贈品</strong></div>{earnedGifts(selectedGroup, draftTotal).length > 0 ? <ul>{earnedGifts(selectedGroup, draftTotal).map(gift => <li key={gift.id}><span>{gift.giftName}</span><b>× {gift.count}</b></li>)}</ul> : <p>目前尚未達到滿額贈品門檻</p>}</div>}
       <p className="form-hint">編輯時可先替多個品項選擇讓單對象；按下「儲存訂單變更」後，系統才會一次完成轉移，並將各品項的應收台幣一起轉給新購買人。</p><div className="edit-order-actions">{editingOrderId && <button type="button" className="danger-button" onClick={deleteOrder}><Trash2 size={16} />刪除這筆訂單</button>}<ModalActions onCancel={() => setOrderModalOpen(false)} submit={editingOrderId ? "儲存訂單變更" : "建立個別訂單"} /></div>
     </form></Modal>}
-    {friendModalOpen && <Modal onClose={() => setFriendModalOpen(false)} eyebrow={editingFriendId ? "EDIT FRIEND" : "NEW FRIEND"} title={editingFriendId ? "編輯朋友資料" : "新增朋友"} wide><FriendForm friend={friendList.find(friend => friend.id === editingFriendId)} onSubmit={saveFriend} onCancel={() => setFriendModalOpen(false)} onDelete={editingFriendId ? deleteFriend : undefined} /></Modal>}
+    {friendModalOpen && <Modal onClose={() => setFriendModalOpen(false)} eyebrow={editingFriendId ? "EDIT FRIEND" : "NEW FRIEND"} title={editingFriendId ? "編輯朋友資料" : "新增朋友"} wide><FriendForm friend={friendList.find(friend => friend.id === editingFriendId)} onSubmit={saveFriend} onCancel={() => setFriendModalOpen(false)} onDelete={editingFriendId ? deleteFriend : undefined} onAccountAction={editingFriendId ? (action, password) => manageFriendAccount(editingFriendId, action, password) : undefined} /></Modal>}
     {waybillModalOpen && <Modal onClose={()=>{setWaybillModalOpen(false);setEditingWaybillId(null);}} eyebrow="INTERNATIONAL WAYBILL" title={editingWaybillId ? "查看與編輯國際運單" : "建立國際運單"} wide><form onSubmit={saveWaybill}>
       <div className="form-row three"><label>出貨國家<select name="country" defaultValue={waybills.find(item=>item.id===editingWaybillId)?.country}><option>韓國</option><option>日本</option><option>其他</option></select></label><label>物流單號<input name="tracking" placeholder="可稍後補上" defaultValue={waybills.find(item=>item.id===editingWaybillId)?.tracking}/></label><label>運單狀態<select name="status" defaultValue={waybills.find(item=>item.id===editingWaybillId)?.status}><option>已申請運回</option><option>已到貨</option></select></label></div>
       <div className="waybill-picker"><div className="waybill-picker-head"><div><strong>選擇這次一起運回的個別訂單</strong><span>僅顯示尚未加入其他運單的訂單；應收運費留空即代表不向該朋友收款</span></div></div>{availableWaybillGroups.map(group=><div className="waybill-group" key={group.id}><h4>{group.name}<small>{currencyInfo[group.currency].label}</small></h4>{group.orders.map(order=>{const key=`${group.id}-${order.id}`;const value=waybillItems[key]??{checked:false,weightG:0,receivableFreightTwd:0};return <label className="waybill-line order-level" key={key}><input type="checkbox" checked={value.checked} onChange={e=>setWaybillItems(current=>({...current,[key]:{...value,checked:e.target.checked}}))}/><span><b>{order.code}・{order.friend}</b><small>{order.lines.map(line=>`${group.products.find(product=>product.id===line.productId)?.name} × ${line.quantity}`).join("、")}</small></span><em>訂單包裹重量<input aria-label={`${order.code}包裹重量`} type="number" min="0" value={value.weightG||""} placeholder="g" disabled={!value.checked} onChange={e=>setWaybillItems(current=>({...current,[key]:{...value,weightG:Number(e.target.value)}}))}/></em><em>該訂單的應收運費（NT$）<input aria-label={`${order.code}應收運費`} type="number" min="0" value={value.receivableFreightTwd||""} placeholder="不收款可留空" disabled={!value.checked} onChange={e=>setWaybillItems(current=>({...current,[key]:{...value,receivableFreightTwd:Number(e.target.value)}}))}/></em></label>})}</div>)}{availableWaybillGroups.length===0&&<div className="waybill-empty"><PackageCheck size={22}/><strong>目前沒有尚未運回的訂單</strong><span>已加入其他運單的訂單不會重複顯示</span></div>}</div>
@@ -481,7 +520,7 @@ function DashboardPage({ groups, orders, payments, parcels, onNavigate, onOpenGr
   </>;
 }
 function FriendsPage({ friends, groups, query, setQuery, onAdd, onEdit }: { friends: Friend[]; groups: Group[]; query: string; setQuery: (value: string) => void; onAdd: () => void; onEdit: (id: number) => void }) {
-  const visible = friends.filter(friend => [friend.name, friend.note].some(value => value.toLowerCase().includes(query.toLowerCase())));
+  const visible = friends.filter(friend => [friend.name, friend.note, friend.portalNote ?? ""].some(value => value.toLowerCase().includes(query.toLowerCase())));
   const details = friends.map(friend => {
     const orders = groups.flatMap(group => group.orders.map(order => ({ group, order }))).filter(item => item.order.friend === friend.name);
     return { friend, orders, groups: new Set(orders.map(item => item.group.id)).size };
@@ -498,13 +537,15 @@ function FriendsPage({ friends, groups, query, setQuery, onAdd, onEdit }: { frie
     </section>
     <section className="groups-section friends-section">
       <div className="orders-toolbar"><div><h3>全部朋友</h3><span>目前顯示 {visible.length} 位</span></div><label className="search order-search"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋朋友名稱或備註" /></label></div>
-      <div className="friend-grid">{visible.map(friend => { const item = details.find(detail => detail.friend.id === friend.id)!; return <article className="friend-card" key={friend.id} onClick={() => onEdit(friend.id)}><div className="friend-card-head"><div className="friend-avatar">{friend.name.slice(0,1).toUpperCase()}</div><div><h3>{friend.name}</h3><span>{friend.note || "尚未新增備註"}</span></div><button aria-label={`編輯${friend.name}`}><Pencil size={17} /></button></div><div className="friend-summary simple"><div><span>參加代購團</span><strong>{item.groups}</strong></div><div><span>個別訂單</span><strong>{item.orders.length}</strong></div></div>{friend.note && <dl><div><dt>備註</dt><dd>{friend.note}</dd></div></dl>}<div className="friend-action">查看與編輯朋友資料 <ChevronRight size={17} /></div></article>; })}</div>
+      <div className="friend-grid">{visible.map(friend => { const item = details.find(detail => detail.friend.id === friend.id)!; const portalStatus=friend.portalStatus??"尚未設定"; return <article className="friend-card" key={friend.id} onClick={() => onEdit(friend.id)}><div className="friend-card-head"><div className="friend-avatar">{friend.name.slice(0,1).toUpperCase()}</div><div><h3>{friend.name}</h3><span>{friend.note || "尚未新增備註"}</span></div><button aria-label={`編輯${friend.name}`}><Pencil size={17} /></button></div><div className="friend-portal-state"><span className={`portal-badge ${portalStatus==="已設定"?"ready":portalStatus==="已停用"?"disabled":"new"}`}>{portalStatus}</span><small>{friend.lastLoginAt ? `最後登入 ${friend.lastLoginAt}` : "尚無登入紀錄"}</small></div><div className="friend-summary simple"><div><span>參加代購團</span><strong>{item.groups}</strong></div><div><span>個別訂單</span><strong>{item.orders.length}</strong></div></div>{friend.portalNote && <dl><div><dt>給朋友看的備註</dt><dd>{friend.portalNote}</dd></div></dl>}<div className="friend-action">查看與管理朋友帳號 <ChevronRight size={17} /></div></article>; })}</div>
       {visible.length === 0 && <div className="empty-state"><Search /><strong>找不到符合條件的朋友</strong><span>請調整搜尋文字或新增朋友</span></div>}
     </section>
   </>;
 }
-function FriendForm({ friend, onSubmit, onCancel, onDelete }: { friend?: Friend; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCancel: () => void; onDelete?: () => void }) {
-  return <form onSubmit={onSubmit}><label>姓名／暱稱<input name="friendName" required autoFocus defaultValue={friend?.name} placeholder="訂單中顯示的名稱" /></label><label>備註<input name="note" defaultValue={friend?.note} placeholder="例如：通常等商品到齊後再一起出貨" /></label><p className="form-hint">這裡不保存聯絡方式、電話或收件資料。實際寄送方式會在建立出貨包裹時選擇。</p><div className="edit-order-actions">{onDelete && <button type="button" className="danger-button" onClick={onDelete}><Trash2 size={16} />刪除朋友</button>}<ModalActions onCancel={onCancel} submit={friend ? "儲存朋友資料" : "新增朋友"} /></div></form>;
+function FriendForm({ friend, onSubmit, onCancel, onDelete, onAccountAction }: { friend?: Friend; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCancel: () => void; onDelete?: () => void; onAccountAction?: (action: "password" | "suspend" | "resume", password?: string) => void }) {
+  const [password, setPassword] = useState("");
+  const portalStatus=friend?.portalStatus??"尚未設定";
+  return <form onSubmit={onSubmit}><div className="form-row"><label>姓名／暱稱<input name="friendName" required autoFocus defaultValue={friend?.name} placeholder="訂單中顯示的名稱" /></label><label>朋友端狀態<input value={portalStatus} readOnly /></label></div><label>後台私人備註<input name="note" defaultValue={friend?.note} placeholder="只有妳自己會看到" /></label><label>給朋友看的備註<textarea name="portalNote" defaultValue={friend?.portalNote} placeholder="例如：這批商品預計下週抵台" /></label>{friend && <section className="friend-account-box"><div><strong>朋友登入設定</strong><span>{friend.lastLoginAt ? `最後登入：${friend.lastLoginAt}` : "目前尚無登入紀錄"}</span></div><label>設定／重設密碼<input type="text" value={password} minLength={4} onChange={event=>setPassword(event.target.value)} placeholder="至少 4 個字元，例如 0000 或 abcd" /></label><div className="friend-account-actions"><button type="button" className="secondary-button" disabled={password.length<4} onClick={()=>{onAccountAction?.("password",password);setPassword("");}}>儲存新密碼</button><button type="button" className={portalStatus==="已停用"?"secondary-button":"danger-button"} onClick={()=>onAccountAction?.(portalStatus==="已停用"?"resume":"suspend")}>{portalStatus==="已停用"?"恢復登入":"暫停登入"}</button></div><small>密碼不會寫入後台資料；妳可以重設，但無法查看朋友原本的密碼。</small></section>}<p className="form-hint">聯絡方式與收件資料不會保存在朋友名單。朋友端只會同步自己的訂單、款項、貨態與上方公開備註。</p><div className="edit-order-actions">{onDelete && <button type="button" className="danger-button" onClick={onDelete}><Trash2 size={16} />刪除朋友</button>}<ModalActions onCancel={onCancel} submit={friend ? "儲存朋友資料" : "新增朋友"} /></div></form>;
 }
 
 function PaymentsPage({ friends, groups, waybills, payments, expenses, tab, setTab, onIncome, onExpense }: { friends: Friend[]; groups: Group[]; waybills: Waybill[]; payments: PaymentRecord[]; expenses: ExpenseRecord[]; tab: "應收款項" | "收款紀錄" | "支出紀錄"; setTab: (tab: "應收款項" | "收款紀錄" | "支出紀錄") => void; onIncome: (friend?: string) => void; onExpense: () => void }) {
