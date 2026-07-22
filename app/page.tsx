@@ -61,6 +61,7 @@ const earnedGifts = (group: Group, total: number) => group.giftRules.flatMap(rul
   const count = rule.cumulative ? Math.floor(total / rule.threshold) : total >= rule.threshold ? 1 : 0;
   return count > 0 ? [{ ...rule, count }] : [];
 });
+const withoutUndefined = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 export default function Home() {
   const [authChecked, setAuthChecked] = useState(false);
@@ -138,7 +139,7 @@ export default function Home() {
     if (!isAuthenticated || !dataLoaded) return;
     const timer = window.setTimeout(() => {
       void setDoc(doc(db, "admin", "state"), {
-        groups, friends: friendList, payments, expenses, parcels, waybills, settings,
+        ...withoutUndefined({ groups, friends: friendList, payments, expenses, parcels, waybills, settings }),
         updatedAt: serverTimestamp(),
       }).catch(() => showNotice("雲端儲存失敗，請確認網路連線"));
     }, 350);
@@ -336,7 +337,7 @@ export default function Home() {
     setWaybillDestination(item?.destination ?? "寄到我這裡");
     setWaybillModalOpen(true);
   }
-  function saveWaybill(event: FormEvent<HTMLFormElement>) {
+  async function saveWaybill(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = new FormData(event.currentTarget);
     const items = Object.entries(waybillItems).filter(([,value]) => value.checked).map(([key,value]) => { const [groupId,orderId] = key.split("-").map(Number); return { groupId, orderId, weightG: value.weightG, receivableFreightTwd: value.receivableFreightTwd || 0 }; });
     if (!items.length) return showNotice("請至少選擇一份要運回的訂單");
@@ -344,10 +345,21 @@ export default function Home() {
     const destination = waybillDestination;
     const existing = editingWaybillId ? waybills.find(item => item.id === editingWaybillId) : null;
     const value: Waybill = { id: existing?.id ?? Date.now(), code: existing?.code ?? `INTL-${String(waybills.length + 1).padStart(3,"0")}`, country: String(form.get("country")) as Waybill["country"], tracking: String(form.get("tracking")||""), items, totalWeightG: Number(form.get("totalWeightG")||0), freightTwd: Number(form.get("freightTwd")||0), destination, recipientFriend: destination === "直寄朋友" ? String(form.get("recipientFriend")||"") : "", status, appliedDate: formatDate(String(form.get("appliedDate")||"")), arrivedDate: status === "已到貨" ? formatDate(String(form.get("arrivedDate")||"")) : "", note: String(form.get("note")||"") };
-    setWaybills(current => existing ? current.map(item => item.id === existing.id ? value : item) : [value,...current]);
     const effectiveWaybills = [...waybills.filter(item => item.id !== existing?.id), value];
-    setGroups(current => current.map(group => { const orders=group.orders.map(order => { const refs=effectiveWaybills.filter(waybill=>waybill.items.some(item=>item.groupId===group.id&&item.orderId===order.id)); const arrived=refs.find(waybill=>waybill.status==="已到貨"); const moving=refs.find(waybill=>waybill.status==="已申請運回"); const active=arrived??moving; return {...order, lines: order.lines.map(line => active ? {...line, arrival: arrived ? "已到貨" as const : "運回中" as const, deliveryRoute: active.destination} : ({...line,arrival:undefined,deliveryRoute:undefined})), arrival: arrived ? "已到貨" as const : "未到貨" as const}; }); const lines=orders.flatMap(order=>order.lines); const arrivedCount=lines.filter(line=>line.arrival==="已到貨").length; const movingCount=lines.filter(line=>line.arrival==="運回中").length; const groupStatus:GroupStatus=arrivedCount===lines.length&&lines.length?"已到貨":arrivedCount>0?"部分到貨":movingCount>0?"待到貨":group.status; return {...group,orders,status:groupStatus}; }));
-    setWaybillModalOpen(false); setEditingWaybillId(null); showNotice(existing ? "已更新國際運單" : status === "已到貨" ? `已建立運單，並同步更新 ${items.length} 份訂單為已到貨` : "已建立國際運單並標示運回中");
+    const nextWaybills = existing ? waybills.map(item => item.id === existing.id ? value : item) : [value,...waybills];
+    const nextGroups = groups.map(group => { const orders=group.orders.map(order => { const refs=effectiveWaybills.filter(waybill=>waybill.items.some(item=>item.groupId===group.id&&item.orderId===order.id)); const arrived=refs.find(waybill=>waybill.status==="已到貨"); const moving=refs.find(waybill=>waybill.status==="已申請運回"); const active=arrived??moving; const lines=order.lines.map(line => active ? {...line, arrival: arrived ? "已到貨" as const : "運回中" as const, deliveryRoute: active.destination} : withoutUndefined({...line,arrival:undefined,deliveryRoute:undefined})); return withoutUndefined({...order, lines, arrival: arrived ? "已到貨" as const : "未到貨" as const}); }); const lines=orders.flatMap(order=>order.lines); const arrivedCount=lines.filter(line=>line.arrival==="已到貨").length; const movingCount=lines.filter(line=>line.arrival==="運回中").length; const groupStatus:GroupStatus=arrivedCount===lines.length&&lines.length?"已到貨":arrivedCount>0?"部分到貨":movingCount>0?"待到貨":group.status; return {...group,orders,status:groupStatus}; });
+    try {
+      await setDoc(doc(db, "admin", "state"), {
+        ...withoutUndefined({ groups: nextGroups, friends: friendList, payments, expenses, parcels, waybills: nextWaybills, settings }),
+        updatedAt: serverTimestamp(),
+      });
+      setGroups(nextGroups);
+      setWaybills(nextWaybills);
+      setWaybillModalOpen(false); setEditingWaybillId(null);
+      showNotice(existing ? "已更新國際運單並儲存至雲端" : status === "已到貨" ? `已建立運單，並同步更新 ${items.length} 份訂單為已到貨` : "已建立國際運單並儲存至雲端");
+    } catch {
+      showNotice("運單儲存失敗，請確認網路後再試一次");
+    }
   }
 
   if (!authChecked || (isAuthenticated && !dataLoaded)) return <main className="login-screen" />;
