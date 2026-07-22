@@ -182,6 +182,20 @@ header { height:96px; display:flex; align-items:center; justify-content:space-be
 .receivable-orders { margin-top:15px; overflow:hidden; border:1px solid #e1e8f1; border-radius:10px; }
 .receivable-orders>div { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-top:1px solid #e8edf4; background:white; }
 .receivable-orders>div:first-child { border-top:0; }.receivable-orders b,.receivable-orders small { display:block; }.receivable-orders b { color:#334b6e; font-size:10px; }.receivable-orders small { margin-top:3px; color:#8a98aa; font-size:9px; }.receivable-orders strong { color:#087f71; font-size:11px; }
+.receivable-orders.grouped { border:0; border-radius:0; background:transparent; }
+.receivable-order-group { overflow:hidden; margin-top:10px; border:1px solid #dde6f1; border-radius:11px; background:white; }
+.receivable-order-group:first-child { margin-top:0; }
+.receivable-order-head,.receivable-order-line { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; }
+.receivable-order-head { background:#f2f6fc; }
+.receivable-order-head span,.receivable-order-line span { min-width:0; }
+.receivable-order-head b,.receivable-order-head small,.receivable-order-line b,.receivable-order-line small { display:block; }
+.receivable-order-head b { color:#29466f; font-size:11px; }
+.receivable-order-head small { margin-top:3px; color:#7889a1; font-size:9px; }
+.receivable-order-head strong { color:#29466f; font-size:10px; white-space:nowrap; }
+.receivable-order-line { border-top:1px solid #e8edf4; }
+.receivable-order-line b { color:#3d5270; font-size:10px; }
+.receivable-order-line small { margin-top:3px; color:#8a98aa; font-size:9px; }
+.receivable-order-line strong { color:#087f71; font-size:11px; white-space:nowrap; }
 .payment-order-picker { margin-top:16px; overflow:hidden; border:1px solid #dce4ef; border-radius:12px; }
 .payment-order-picker>strong { display:block; padding:13px 15px; background:#f5f8fc; font-size:12px; }
 .payment-order-picker label { display:flex; align-items:center; gap:11px; margin:0; padding:13px 15px; border-top:1px solid #e7edf5; cursor:pointer; }
@@ -300,4 +314,6 @@ header { height:96px; display:flex; align-items:center; justify-content:space-be
 .waybill-picker { max-height:370px; margin:18px 0; overflow:auto; border:1px solid #dce4ef; border-radius:13px; }.waybill-picker-head { position:sticky; top:0; z-index:2; padding:14px 16px; background:#f5f8fc; }.waybill-picker-head strong,.waybill-picker-head span { display:block; }.waybill-picker-head span { margin-top:4px; color:#8290a4; font-size:9px; }.waybill-group h4 { margin:0; padding:12px 16px; border-top:1px solid #dfe7f1; background:#eef3fa; color:#2f486a; font-size:11px; }.waybill-group h4 small { margin-left:8px; color:#8a97aa; font-weight:500; }.waybill-line { display:grid; grid-template-columns:18px minmax(150px,1fr) 130px; align-items:center; gap:12px; margin:0; padding:11px 16px; border-top:1px solid #e8edf4; }.waybill-line>input { width:17px; height:17px; margin:0; }.waybill-line span b,.waybill-line span small { display:block; }.waybill-line span b { color:#304868; font-size:10px; }.waybill-line span small { margin-top:4px; color:#8794a7; font-size:9px; line-height:1.45; }.waybill-line em { color:#7b899d; font-size:8px; font-style:normal; }.waybill-line em input { width:100%; height:31px; margin-top:4px; border:1px solid #dbe3ee; border-radius:7px; padding:0 8px; }.waybill-line em input:disabled { background:#f2f5f9; color:#a0aabb; }.split-rule-card { margin:15px 0; border:1px solid #dbe4ef; border-radius:12px; padding:15px; background:#f9fbfe; }.split-rule-card>strong { display:block; margin-bottom:12px; color:#304869; font-size:12px; }.split-rule-card>small { color:#8491a5; font-size:9px; }
 @media (max-width:760px) { .waybill-grid { grid-template-columns:1fr; padding:0 13px 15px; }.waybill-line { grid-template-columns:18px 1fr; }.waybill-line em { grid-column:2; } }
 .waybill-line { grid-template-columns:18px minmax(150px,1fr) 130px 190px; }
+.waybill-empty { display:grid; justify-items:center; gap:7px; padding:34px 18px; color:#8b98aa; text-align:center; }
+.waybill-empty svg { color:#6f8db8; }.waybill-empty strong { color:#425979; font-size:12px; }.waybill-empty span { font-size:9px; }
 @media (max-width:760px) { .waybill-line { grid-template-columns:18px 1fr; } }
