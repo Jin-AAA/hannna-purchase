@@ -11,7 +11,7 @@ import { onAuthStateChanged, signInWithEmailAndPassword, signOut, updatePassword
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
-type GroupStatus = "收單中" | "待到貨" | "部分到貨" | "整理出貨" | "部分出貨" | "已完成";
+type GroupStatus = "待下單" | "待到貨" | "部分到貨" | "已到貨" | "出貨中" | "部分出貨" | "已出貨" | "已完成";
 type Currency = "KRW" | "JPY" | "TWD";
 type Product = { id: number; name: string; unitPrice: number };
 type GiftRule = { id: number; threshold: number; giftName: string; cumulative: boolean };
@@ -48,8 +48,9 @@ const navItems = [
   [LayoutDashboard, "總覽"], [UsersRound, "代購團"], [ClipboardList, "訂單明細"], [Globe2, "國際運單"],
   [UserRound, "朋友名單"], [CircleDollarSign, "款項紀錄"], [Truck, "出貨管理"], [Settings, "設定"],
 ] as const;
-const groupStatuses: GroupStatus[] = ["收單中", "待到貨", "部分到貨", "整理出貨", "部分出貨", "已完成"];
-const statusClass: Record<GroupStatus, string> = { 收單中: "mint", 待到貨: "amber", 部分到貨: "coral", 整理出貨: "blue", 部分出貨: "violet", 已完成: "gray" };
+const groupStatuses: GroupStatus[] = ["待下單", "待到貨", "部分到貨", "已到貨", "出貨中", "部分出貨", "已出貨", "已完成"];
+const statusClass: Record<GroupStatus, string> = { 待下單: "gray", 待到貨: "amber", 部分到貨: "coral", 已到貨: "mint", 出貨中: "blue", 部分出貨: "violet", 已出貨: "mint", 已完成: "gray" };
+const normalizeGroupStatus = (value: string): GroupStatus => value === "收單中" ? "待下單" : value === "整理出貨" ? "已到貨" : groupStatuses.includes(value as GroupStatus) ? value as GroupStatus : "待下單";
 const formatDate = (value: string) => value ? value.replaceAll("-", "/") : "未設定";
 const orderQuantity = (order: Order) => order.lines.reduce((sum, line) => sum + line.quantity, 0);
 const orderTotal = (group: Group, order: Order) => order.lines.reduce((sum, line) => sum + (group.products.find(p => p.id === line.productId)?.unitPrice ?? 0) * line.quantity, 0);
@@ -116,7 +117,7 @@ export default function Home() {
         const snapshot = await getDoc(doc(db, "admin", "state"));
         if (snapshot.exists()) {
           const data = snapshot.data();
-          setGroups((data.groups as Group[]) ?? []);
+          setGroups(((data.groups as Group[]) ?? []).map(group => ({ ...group, status: normalizeGroupStatus(String(group.status)) })));
           setFriendList((data.friends as Friend[]) ?? []);
           setPayments((data.payments as PaymentRecord[]) ?? []);
           setExpenses((data.expenses as ExpenseRecord[]) ?? []);
@@ -149,12 +150,24 @@ export default function Home() {
   const totalProducts = groups.reduce((sum, group) => sum + group.products.length, 0);
   const totalPurchased = groups.flatMap(group => group.orders).reduce((sum, order) => sum + orderQuantity(order), 0);
   const draftTotal = selectedGroup ? selectedGroup.products.reduce((sum, product) => sum + product.unitPrice * (orderLines[product.id] || 0), 0) : 0;
-  const allOrders = groups.flatMap((group, groupIndex) => group.orders.map((order, orderIndex) => ({
-    group, order,
-    payment: order.payment ?? (["已付款", "未付款", "部分付款"] as PaymentStatus[])[(groupIndex + orderIndex) % 3],
-    arrival: order.lines.some(line => line.arrival) ? (order.lines.every(line => line.arrival === "已到貨") ? "已到貨" : order.lines.some(line => line.arrival === "已到貨") ? "部分到貨" : "未到貨") : order.arrival ?? (["未到貨", "部分到貨", "已到貨"] as ArrivalStatus[])[(groupIndex * 2 + orderIndex) % 3],
-    shipping: order.shipping ?? (["待到貨", "待出貨", "已出貨"] as ShippingStatus[])[(groupIndex + orderIndex * 2) % 3],
-  })));
+  const paidByOrder = new Map<number, number>();
+  payments.forEach(record => {
+    const selected = groups.flatMap(group => group.orders).filter(order => record.orderIds.includes(order.id));
+    const total = selected.reduce((sum, order) => sum + order.receivableTwd, 0);
+    selected.forEach(order => {
+      const allocated = total > 0 ? record.amount * order.receivableTwd / total : 0;
+      paidByOrder.set(order.id, (paidByOrder.get(order.id) ?? 0) + allocated);
+    });
+  });
+  const allOrders = groups.flatMap(group => group.orders.map(order => {
+    const paid = paidByOrder.get(order.id) ?? 0;
+    const payment: PaymentStatus = order.receivableTwd <= 0 || paid >= order.receivableTwd - 0.5 ? "已付款" : paid > 0 ? "部分付款" : "未付款";
+    const lineArrival: ArrivalStatus = order.lines.every(line => line.arrival === "已到貨") ? "已到貨" : order.lines.some(line => line.arrival === "已到貨") ? "部分到貨" : "未到貨";
+    const arrival: ArrivalStatus = ["已到貨", "出貨中", "部分出貨", "已出貨", "已完成"].includes(group.status) ? "已到貨" : group.status === "部分到貨" ? (lineArrival === "未到貨" ? "部分到貨" : lineArrival) : lineArrival;
+    const parcel = parcels.find(item => item.orderIds.includes(order.id));
+    const shipping: ShippingStatus = parcel ? (parcel.status === "待出貨" ? "待出貨" : "已出貨") : ["已出貨", "已完成"].includes(group.status) ? "已出貨" : ["已到貨", "出貨中", "部分出貨"].includes(group.status) ? "待出貨" : "待到貨";
+    return { group, order, payment, arrival, shipping };
+  }));
   const visibleOrders = allOrders.filter(({ group, order, payment, arrival, shipping }) =>
     (order.friend.toLowerCase().includes(query.toLowerCase()) || group.name.toLowerCase().includes(query.toLowerCase()) || order.code.toLowerCase().includes(query.toLowerCase())) &&
     (orderFriend === "全部朋友" || order.friend === orderFriend) && (orderGroup === "全部代購團" || group.name === orderGroup) &&
@@ -221,7 +234,7 @@ export default function Home() {
       setGroups(current => current.map(group => group.id === selectedGroup.id ? { ...group, name, saleDate: formatDate(String(form.get("saleDate") || "")), currency, products, giftRules } : group));
       setGroupModalOpen(false); showNotice(`已儲存「${name}」的代購團設定`);
     } else {
-      setGroups(current => [{ id: Date.now(), name, saleDate: formatDate(String(form.get("saleDate") || "")), currency, status: "收單中", products, giftRules, orders: [] }, ...current]);
+      setGroups(current => [{ id: Date.now(), name, saleDate: formatDate(String(form.get("saleDate") || "")), currency, status: "待下單", products, giftRules, orders: [] }, ...current]);
       setGroupModalOpen(false); showNotice(`已新增「${name}」，共 ${products.length} 個品項`);
     }
   }
@@ -310,7 +323,7 @@ export default function Home() {
     const freightPayer = waybillFreightPayer;
     const value: Waybill = { id: Date.now(), code: `INTL-${String(waybills.length + 1).padStart(3,"0")}`, country: String(form.get("country")) as Waybill["country"], tracking: String(form.get("tracking")||""), items, totalWeightG: Number(form.get("totalWeightG")||0), freightTwd: Number(form.get("freightTwd")||0), freightPayer, freightFriend: String(form.get("freightFriend")||""), freightReceivableTwd: freightPayer === "我代墊・需收款" ? Number(form.get("freightReceivableTwd")||0) : 0, destination, recipientFriend: destination === "直寄朋友" ? String(form.get("recipientFriend")||"") : "", status, appliedDate: formatDate(String(form.get("appliedDate")||"")), arrivedDate: status === "已到貨" ? formatDate(String(form.get("arrivedDate")||"")) : "", note: String(form.get("note")||"") };
     setWaybills(current => [value,...current]);
-    setGroups(current => current.map(group => { const orders=group.orders.map(order => { const picked=items.some(item=>item.groupId===group.id&&item.orderId===order.id); return picked ? {...order, lines: order.lines.map(line => ({...line, arrival: status === "已到貨" ? "已到貨" as const : "運回中" as const, deliveryRoute: destination})), arrival: status === "已到貨" ? "已到貨" as const : "未到貨" as const} : order; }); const lines=orders.flatMap(order=>order.lines); const arrivedCount=lines.filter(line=>line.arrival==="已到貨").length; const movingCount=lines.filter(line=>line.arrival==="運回中").length; const groupStatus:GroupStatus=arrivedCount===lines.length&&lines.length?"整理出貨":arrivedCount>0?"部分到貨":movingCount>0?"待到貨":group.status; return {...group,orders,status:groupStatus}; }));
+    setGroups(current => current.map(group => { const orders=group.orders.map(order => { const picked=items.some(item=>item.groupId===group.id&&item.orderId===order.id); return picked ? {...order, lines: order.lines.map(line => ({...line, arrival: status === "已到貨" ? "已到貨" as const : "運回中" as const, deliveryRoute: destination})), arrival: status === "已到貨" ? "已到貨" as const : "未到貨" as const} : order; }); const lines=orders.flatMap(order=>order.lines); const arrivedCount=lines.filter(line=>line.arrival==="已到貨").length; const movingCount=lines.filter(line=>line.arrival==="運回中").length; const groupStatus:GroupStatus=arrivedCount===lines.length&&lines.length?"已到貨":arrivedCount>0?"部分到貨":movingCount>0?"待到貨":group.status; return {...group,orders,status:groupStatus}; }));
     setWaybillModalOpen(false); showNotice(status === "已到貨" ? `已建立運單，並同步更新 ${items.length} 份訂單為已到貨` : "已建立國際運單並標示運回中");
   }
 
@@ -463,10 +476,10 @@ function FriendForm({ friend, onSubmit, onCancel, onDelete }: { friend?: Friend;
 function PaymentsPage({ friends, groups, waybills, payments, expenses, tab, setTab, onIncome, onExpense }: { friends: Friend[]; groups: Group[]; waybills: Waybill[]; payments: PaymentRecord[]; expenses: ExpenseRecord[]; tab: "應收款項" | "收款紀錄" | "支出紀錄"; setTab: (tab: "應收款項" | "收款紀錄" | "支出紀錄") => void; onIncome: (friend?: string) => void; onExpense: () => void }) {
   const receivables = friends.map(friend => { const orders = groups.flatMap(group => group.orders.filter(order => order.friend === friend.name).map(order => ({group,order}))); const freight=waybills.filter(item=>item.freightFriend===friend.name&&item.freightReceivableTwd>0); const due = orders.reduce((sum,{order}) => sum + order.receivableTwd, 0)+freight.reduce((sum,item)=>sum+item.freightReceivableTwd,0); const paid = payments.filter(record => record.friend === friend.name).reduce((sum,record) => sum + record.amount,0); return { friend, orders, freight, due, paid, balance: Math.max(0,due-paid) }; }).filter(item => item.orders.length > 0||item.freight.length>0);
   const totalDue = receivables.reduce((sum,item) => sum + item.due,0); const totalPaid = payments.reduce((sum,item) => sum + item.amount,0); const totalExpense = expenses.reduce((sum,item) => sum + item.amount,0);
-  return <><div className="section-heading"><div><span className="eyebrow">PAYMENTS</span><h2>款項紀錄</h2><p>分開管理朋友應付金額、實際收款與代購支出</p></div><button className="mobile-add" onClick={onIncome}><Plus size={18}/>新增收款</button></div>
+  return <><div className="section-heading"><div><span className="eyebrow">PAYMENTS</span><h2>款項紀錄</h2><p>分開管理朋友應付金額、實際收款與代購支出</p></div><button className="mobile-add" onClick={() => onIncome()}><Plus size={18}/>新增收款</button></div>
     <section className="stats-grid payment-stats"><StatCard icon={<ClipboardList/>} tone="ice" label="應收總額" value={`NT$${totalDue.toLocaleString()}`} note="依各訂單應收台幣加總"/><StatCard icon={<CircleDollarSign/>} tone="mint" label="已收款" value={`NT$${totalPaid.toLocaleString()}`} note={`${payments.length} 筆實際收款`}/><StatCard icon={<Bell/>} tone="amber" label="尚未收款" value={`NT$${Math.max(0,totalDue-totalPaid).toLocaleString()}`} note={`${receivables.filter(item=>item.balance>0).length} 位朋友待結清`}/><StatCard icon={<ShoppingBag/>} tone="lilac" label="已記錄支出" value={`NT$${totalExpense.toLocaleString()}`} note={`${expenses.length} 筆支出紀錄`}/></section>
     <section className="groups-section payments-section"><div className="payment-tabs">{(["應收款項","收款紀錄","支出紀錄"] as const).map(item=><button key={item} className={tab===item?"active":""} onClick={()=>setTab(item)}>{item}</button>)}</div>
-      <div className="payment-panel-head"><div><h3>{tab}</h3><span>{tab==="應收款項"?"查看每位朋友目前的結款進度":tab==="收款紀錄"?"保留每一次實際收到款項的日期與方式":"記錄商品款、國際運費、關稅與其他支出"}</span></div><button className="secondary-add" onClick={tab==="支出紀錄"?onExpense:onIncome}><Plus size={16}/>{tab==="支出紀錄"?"新增支出":"新增收款"}</button></div>
+      <div className="payment-panel-head"><div><h3>{tab}</h3><span>{tab==="應收款項"?"查看每位朋友目前的結款進度":tab==="收款紀錄"?"保留每一次實際收到款項的日期與方式":"記錄商品款、國際運費、關稅與其他支出"}</span></div><button className="secondary-add" onClick={() => tab==="支出紀錄" ? onExpense() : onIncome()}><Plus size={16}/>{tab==="支出紀錄"?"新增支出":"新增收款"}</button></div>
       {tab==="應收款項" ? <div className="receivable-grid">{receivables.map(item=><article key={item.friend.id}><div className="receivable-head"><div className="friend-avatar">{item.friend.name.slice(0,1)}</div><div><h3>{item.friend.name}</h3><span>{item.orders.length} 筆商品款・{item.freight.length} 筆國際運費</span></div><OrderState value={item.balance===0?"已付款":item.paid>0?"部分付款":"未付款"}/></div><div className="receivable-orders">{item.orders.map(({group,order})=><div key={order.id}><span><b>商品款・{group.name}</b><small>{order.code}</small></span><strong>NT${order.receivableTwd.toLocaleString()}</strong></div>)}{item.freight.map(fee=><div key={`freight-${fee.id}`}><span><b>國際運費・{fee.code}</b><small>{fee.country}・{fee.destination}</small></span><strong>NT${fee.freightReceivableTwd.toLocaleString()}</strong></div>)}</div><div className="amount-row"><span>應收<strong>NT${item.due.toLocaleString()}</strong></span><span>已收<strong>NT${item.paid.toLocaleString()}</strong></span><span>尚欠<strong className={item.balance?"unpaid":"paid"}>NT${item.balance.toLocaleString()}</strong></span></div><div className="payment-progress"><i style={{width:`${item.due?Math.min(100,item.paid/item.due*100):0}%`}}/></div><button onClick={()=>onIncome(item.friend.name)}>新增這位朋友的收款 <ChevronRight size={16}/></button></article>)}</div> : <div className="table-wrap"><table className="payment-table"><thead><tr>{tab==="收款紀錄"?<><th>收款日期</th><th>付款人</th><th>支付款項</th><th>付款方式／備註</th><th>收款金額</th></>:<><th>支出日期</th><th>類別</th><th>所屬代購團</th><th>備註</th><th>支出金額</th></>}</tr></thead><tbody>{tab==="收款紀錄"?payments.map(record=><tr key={record.id}><td>{record.date}</td><td><strong>{record.friend}</strong></td><td>{[...groups.flatMap(group=>group.orders.filter(order=>record.orderIds.includes(order.id)).map(()=>`商品款・${group.name}`)),...waybills.filter(item=>record.orderIds.includes(-item.id)).map(item=>`國際運費・${item.code}`)].join("、")||"—"}</td><td>{record.method}{record.note?`・${record.note}`:""}</td><td><strong className="income-money">+ NT${record.amount.toLocaleString()}</strong></td></tr>):expenses.map(record=><tr key={record.id}><td>{record.date}</td><td><span className="expense-category">{record.category}</span></td><td>{record.group}</td><td>{record.note||"—"}</td><td><strong className="expense-money">− NT${record.amount.toLocaleString()}</strong></td></tr>)}</tbody></table></div>}
       <div className="table-footer">應收金額分別來自品項商品款與國際運單運費；朋友自行付清或妳自行負擔的款項不會列入</div></section></>;
 }
