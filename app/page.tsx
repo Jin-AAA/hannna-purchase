@@ -31,6 +31,7 @@ type Parcel = { id: number; code: string; friend: string; orderIds: number[]; me
 type FreightPayer = "我代墊・需收款" | "朋友自行付清" | "我自行負擔";
 type WaybillItem = { groupId: number; orderId: number; weightG: number };
 type Waybill = { id: number; code: string; country: "韓國" | "日本" | "其他"; tracking: string; items: WaybillItem[]; totalWeightG: number; freightTwd: number; freightPayer: FreightPayer; freightFriend: string; freightReceivableTwd: number; destination: "寄到我這裡" | "直寄朋友"; recipientFriend: string; status: "已申請運回" | "已到貨"; appliedDate: string; arrivedDate: string; note: string };
+type AppSettings = { siteName: string; adminName: string; orderPrefix: string; amountDisplay: "original" | "twd"; thousands: boolean; paymentMethods: string[]; deliveryMethods: DeliveryMethod[]; defaultShippingNote: string };
 
 const currencyInfo: Record<Currency, { label: string; symbol: string }> = {
   KRW: { label: "韓幣 KRW", symbol: "₩" },
@@ -44,6 +45,7 @@ const initialParcels: Parcel[] = [];
 const initialWaybills: Waybill[] = [];
 const friends = initialFriends.map(friend => friend.name);
 const initialGroups: Group[] = [];
+const initialSettings: AppSettings = { siteName: "哈娜的小車車", adminName: "Jiin", orderPrefix: "ORDER", amountDisplay: "original", thousands: true, paymentMethods: ["銀行轉帳", "LINE Pay"], deliveryMethods: ["面交", "賣貨便"], defaultShippingNote: "" };
 const navItems = [
   [LayoutDashboard, "總覽"], [UsersRound, "代購團"], [ClipboardList, "訂單明細"], [Globe2, "國際運單"],
   [UserRound, "朋友名單"], [CircleDollarSign, "款項紀錄"], [Truck, "出貨管理"], [Settings, "設定"],
@@ -104,9 +106,11 @@ export default function Home() {
   const [shippingTab, setShippingTab] = useState<"待到齊" | "可出貨" | "包裹紀錄">("可出貨");
   const [waybills, setWaybills] = useState(initialWaybills);
   const [waybillModalOpen, setWaybillModalOpen] = useState(false);
+  const [editingWaybillId, setEditingWaybillId] = useState<number | null>(null);
   const [waybillItems, setWaybillItems] = useState<Record<string, { checked: boolean; weightG: number }>>({});
   const [waybillFreightPayer, setWaybillFreightPayer] = useState<FreightPayer>("我代墊・需收款");
   const [waybillDestination, setWaybillDestination] = useState<Waybill["destination"]>("寄到我這裡");
+  const [settings, setSettings] = useState<AppSettings>(initialSettings);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async user => {
@@ -123,6 +127,7 @@ export default function Home() {
           setExpenses((data.expenses as ExpenseRecord[]) ?? []);
           setParcels((data.parcels as Parcel[]) ?? []);
           setWaybills((data.waybills as Waybill[]) ?? []);
+          setSettings({ ...initialSettings, ...((data.settings as Partial<AppSettings>) ?? {}) });
         }
         setDataLoaded(true);
       } catch {
@@ -135,12 +140,12 @@ export default function Home() {
     if (!isAuthenticated || !dataLoaded) return;
     const timer = window.setTimeout(() => {
       void setDoc(doc(db, "admin", "state"), {
-        groups, friends: friendList, payments, expenses, parcels, waybills,
+        groups, friends: friendList, payments, expenses, parcels, waybills, settings,
         updatedAt: serverTimestamp(),
       }).catch(() => showNotice("雲端儲存失敗，請確認網路連線"));
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [groups, friendList, payments, expenses, parcels, waybills, isAuthenticated, dataLoaded]);
+  }, [groups, friendList, payments, expenses, parcels, waybills, settings, isAuthenticated, dataLoaded]);
 
   const selectedGroup = groups.find(group => group.id === selectedGroupId) ?? null;
   const visibleGroups = useMemo(() => groups.filter(group =>
@@ -246,7 +251,7 @@ export default function Home() {
     if (!lines.length) return showNotice("請至少選擇一個商品數量");
     const friend = String(form.get("friend") || "未指定");
     setGroups(current => current.map(group => group.id !== selectedGroup.id ? group : ({
-      ...group, orders: editingOrderId ? applyOrderEditsAndTransfers(group, editingOrderId, friend, lines, transferTargets) : [...group.orders, { id: Date.now(), code: `ORDER ${String(group.orders.length + 1).padStart(2, "0")}`, friend, lines, receivableTwd: orderReceivable({ lines } as Order) }],
+      ...group, orders: editingOrderId ? applyOrderEditsAndTransfers(group, editingOrderId, friend, lines, transferTargets) : [...group.orders, { id: Date.now(), code: `${settings.orderPrefix || "ORDER"} ${String(group.orders.length + 1).padStart(2, "0")}`, friend, lines, receivableTwd: orderReceivable({ lines } as Order) }],
     })));
     setOrderModalOpen(false); if (activeNav === "訂單明細") setSelectedGroupId(null); showNotice(`${editingOrderId ? "已更新" : "已新增"} ${friend} 的訂單，總計 ${money(draftTotal, selectedGroup.currency)}`);
   }
@@ -257,7 +262,7 @@ export default function Home() {
       const targetFriend = targets[line.productId];
       const target = orders.find(order => order.id !== sourceId && order.friend === targetFriend);
       if (target) orders = orders.map(order => order.id !== target.id ? order : ({ ...order, lines: order.lines.some(item => item.productId === line.productId) ? order.lines.map(item => item.productId === line.productId ? { ...item, quantity: item.quantity + line.quantity, receivableTwd: item.receivableTwd + line.receivableTwd } : item) : [...order.lines, line] }));
-      else orders.push({ id: Date.now() + index, code: `ORDER ${String(orders.length + 1).padStart(2, "0")}`, friend: targetFriend, lines: [line], receivableTwd: line.receivableTwd });
+      else orders.push({ id: Date.now() + index, code: `${settings.orderPrefix || "ORDER"} ${String(orders.length + 1).padStart(2, "0")}`, friend: targetFriend, lines: [line], receivableTwd: line.receivableTwd });
     });
     return orders.filter(order => order.id !== sourceId || order.lines.length > 0).map(order => ({ ...order, receivableTwd: orderReceivable(order) }));
   }
@@ -313,7 +318,14 @@ export default function Home() {
     const value: Parcel = { id: Date.now(), code: `SHIP-${String(parcels.length + 1).padStart(3,"0")}`, friend: parcelFriend, orderIds: parcelOrders, method: String(form.get("method")) as DeliveryMethod, shippingFee: Number(form.get("shippingFee") || 0), tracking: String(form.get("tracking") || ""), date: formatDate(String(form.get("date") || "")), note: String(form.get("note") || ""), status: "待出貨" };
     setParcels(current => [value, ...current]); setParcelModalOpen(false); showNotice(`已建立 ${parcelFriend} 的出貨包裹`);
   }
-  function openWaybillModal() { setWaybillItems({}); setWaybillFreightPayer("我代墊・需收款"); setWaybillDestination("寄到我這裡"); setWaybillModalOpen(true); }
+  function openWaybillModal(waybillId: number | null = null) {
+    const item = waybillId ? waybills.find(waybill => waybill.id === waybillId) : null;
+    setEditingWaybillId(waybillId);
+    setWaybillItems(item ? Object.fromEntries(item.items.map(ref => [`${ref.groupId}-${ref.orderId}`, { checked: true, weightG: ref.weightG }])) : {});
+    setWaybillFreightPayer(item?.freightPayer ?? "我代墊・需收款");
+    setWaybillDestination(item?.destination ?? "寄到我這裡");
+    setWaybillModalOpen(true);
+  }
   function saveWaybill(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = new FormData(event.currentTarget);
     const items = Object.entries(waybillItems).filter(([,value]) => value.checked).map(([key,value]) => { const [groupId,orderId] = key.split("-").map(Number); return { groupId, orderId, weightG: value.weightG }; });
@@ -321,20 +333,22 @@ export default function Home() {
     const status = String(form.get("status")) as Waybill["status"];
     const destination = waybillDestination;
     const freightPayer = waybillFreightPayer;
-    const value: Waybill = { id: Date.now(), code: `INTL-${String(waybills.length + 1).padStart(3,"0")}`, country: String(form.get("country")) as Waybill["country"], tracking: String(form.get("tracking")||""), items, totalWeightG: Number(form.get("totalWeightG")||0), freightTwd: Number(form.get("freightTwd")||0), freightPayer, freightFriend: String(form.get("freightFriend")||""), freightReceivableTwd: freightPayer === "我代墊・需收款" ? Number(form.get("freightReceivableTwd")||0) : 0, destination, recipientFriend: destination === "直寄朋友" ? String(form.get("recipientFriend")||"") : "", status, appliedDate: formatDate(String(form.get("appliedDate")||"")), arrivedDate: status === "已到貨" ? formatDate(String(form.get("arrivedDate")||"")) : "", note: String(form.get("note")||"") };
-    setWaybills(current => [value,...current]);
-    setGroups(current => current.map(group => { const orders=group.orders.map(order => { const picked=items.some(item=>item.groupId===group.id&&item.orderId===order.id); return picked ? {...order, lines: order.lines.map(line => ({...line, arrival: status === "已到貨" ? "已到貨" as const : "運回中" as const, deliveryRoute: destination})), arrival: status === "已到貨" ? "已到貨" as const : "未到貨" as const} : order; }); const lines=orders.flatMap(order=>order.lines); const arrivedCount=lines.filter(line=>line.arrival==="已到貨").length; const movingCount=lines.filter(line=>line.arrival==="運回中").length; const groupStatus:GroupStatus=arrivedCount===lines.length&&lines.length?"已到貨":arrivedCount>0?"部分到貨":movingCount>0?"待到貨":group.status; return {...group,orders,status:groupStatus}; }));
-    setWaybillModalOpen(false); showNotice(status === "已到貨" ? `已建立運單，並同步更新 ${items.length} 份訂單為已到貨` : "已建立國際運單並標示運回中");
+    const existing = editingWaybillId ? waybills.find(item => item.id === editingWaybillId) : null;
+    const value: Waybill = { id: existing?.id ?? Date.now(), code: existing?.code ?? `INTL-${String(waybills.length + 1).padStart(3,"0")}`, country: String(form.get("country")) as Waybill["country"], tracking: String(form.get("tracking")||""), items, totalWeightG: Number(form.get("totalWeightG")||0), freightTwd: Number(form.get("freightTwd")||0), freightPayer, freightFriend: String(form.get("freightFriend")||""), freightReceivableTwd: freightPayer === "我代墊・需收款" ? Number(form.get("freightReceivableTwd")||0) : 0, destination, recipientFriend: destination === "直寄朋友" ? String(form.get("recipientFriend")||"") : "", status, appliedDate: formatDate(String(form.get("appliedDate")||"")), arrivedDate: status === "已到貨" ? formatDate(String(form.get("arrivedDate")||"")) : "", note: String(form.get("note")||"") };
+    setWaybills(current => existing ? current.map(item => item.id === existing.id ? value : item) : [value,...current]);
+    const effectiveWaybills = [...waybills.filter(item => item.id !== existing?.id), value];
+    setGroups(current => current.map(group => { const orders=group.orders.map(order => { const refs=effectiveWaybills.filter(waybill=>waybill.items.some(item=>item.groupId===group.id&&item.orderId===order.id)); const arrived=refs.find(waybill=>waybill.status==="已到貨"); const moving=refs.find(waybill=>waybill.status==="已申請運回"); const active=arrived??moving; return {...order, lines: order.lines.map(line => active ? {...line, arrival: arrived ? "已到貨" as const : "運回中" as const, deliveryRoute: active.destination} : ({...line,arrival:undefined,deliveryRoute:undefined})), arrival: arrived ? "已到貨" as const : "未到貨" as const}; }); const lines=orders.flatMap(order=>order.lines); const arrivedCount=lines.filter(line=>line.arrival==="已到貨").length; const movingCount=lines.filter(line=>line.arrival==="運回中").length; const groupStatus:GroupStatus=arrivedCount===lines.length&&lines.length?"已到貨":arrivedCount>0?"部分到貨":movingCount>0?"待到貨":group.status; return {...group,orders,status:groupStatus}; }));
+    setWaybillModalOpen(false); setEditingWaybillId(null); showNotice(existing ? "已更新國際運單" : status === "已到貨" ? `已建立運單，並同步更新 ${items.length} 份訂單為已到貨` : "已建立國際運單並標示運回中");
   }
 
   if (!authChecked || (isAuthenticated && !dataLoaded)) return <main className="login-screen" />;
   if (!isAuthenticated) return <LoginPage onSubmit={login} error={loginError} />;
   return <main className="app-shell">
     <aside className={`sidebar ${mobileNav ? "mobile-open" : ""}`}>
-      <div className="brand"><ShoppingBag size={24} /><span>哈娜的小車車</span></div>
+      <div className="brand"><ShoppingBag size={24} /><span>{settings.siteName}</span></div>
       <button className="close-nav" onClick={() => setMobileNav(false)} aria-label="關閉選單"><X /></button>
       <nav>{navItems.map(([Icon, label]) => <button key={label} className={activeNav === label ? "active" : ""} onClick={() => changeNav(label)}><Icon size={21} strokeWidth={1.8} /><span>{label}</span></button>)}</nav>
-      <div className="sidebar-note"><div className="avatar">J</div><div><strong>Jiin</strong><span>管理員</span></div></div>
+      <div className="sidebar-note"><div className="avatar">{settings.adminName.slice(0,1).toUpperCase()}</div><div><strong>{settings.adminName}</strong><span>管理員</span></div></div>
     </aside>
     <section className="workspace">
       <header>
@@ -358,7 +372,7 @@ export default function Home() {
             <div className="table-footer">點選任一代購團，進入新增個別訂單</div>
           </section>
         </>}
-        {activeNav === "設定" && <div className="settings-overlay"><SettingsPage groups={groups} friends={friendList} payments={payments} expenses={expenses} parcels={parcels} onSavePassword={savePassword} onNotice={showNotice} /></div>}
+        {activeNav === "設定" && <div className="settings-overlay"><SettingsPage groups={groups} friends={friendList} payments={payments} expenses={expenses} parcels={parcels} settings={settings} onSave={value => { setSettings(value); showNotice("設定已儲存"); }} onSavePassword={savePassword} onNotice={showNotice} /></div>}
       </div>
     </section>
 
@@ -385,20 +399,20 @@ export default function Home() {
       <p className="form-hint">編輯時可先替多個品項選擇讓單對象；按下「儲存訂單變更」後，系統才會一次完成轉移，並將各品項的應收台幣一起轉給新購買人。</p><div className="edit-order-actions">{editingOrderId && <button type="button" className="danger-button" onClick={deleteOrder}><Trash2 size={16} />刪除這筆訂單</button>}<ModalActions onCancel={() => setOrderModalOpen(false)} submit={editingOrderId ? "儲存訂單變更" : "建立個別訂單"} /></div>
     </form></Modal>}
     {friendModalOpen && <Modal onClose={() => setFriendModalOpen(false)} eyebrow={editingFriendId ? "EDIT FRIEND" : "NEW FRIEND"} title={editingFriendId ? "編輯朋友資料" : "新增朋友"} wide><FriendForm friend={friendList.find(friend => friend.id === editingFriendId)} onSubmit={saveFriend} onCancel={() => setFriendModalOpen(false)} onDelete={editingFriendId ? deleteFriend : undefined} /></Modal>}
-    {waybillModalOpen && <Modal onClose={()=>setWaybillModalOpen(false)} eyebrow="INTERNATIONAL WAYBILL" title="建立國際運單" wide><form onSubmit={saveWaybill}>
-      <div className="form-row three"><label>出貨國家<select name="country"><option>韓國</option><option>日本</option><option>其他</option></select></label><label>物流單號<input name="tracking" placeholder="可稍後補上" /></label><label>運單狀態<select name="status"><option>已申請運回</option><option>已到貨</option></select></label></div>
+    {waybillModalOpen && <Modal onClose={()=>{setWaybillModalOpen(false);setEditingWaybillId(null);}} eyebrow="INTERNATIONAL WAYBILL" title={editingWaybillId ? "查看與編輯國際運單" : "建立國際運單"} wide><form onSubmit={saveWaybill}>
+      <div className="form-row three"><label>出貨國家<select name="country" defaultValue={waybills.find(item=>item.id===editingWaybillId)?.country}><option>韓國</option><option>日本</option><option>其他</option></select></label><label>物流單號<input name="tracking" placeholder="可稍後補上" defaultValue={waybills.find(item=>item.id===editingWaybillId)?.tracking}/></label><label>運單狀態<select name="status" defaultValue={waybills.find(item=>item.id===editingWaybillId)?.status}><option>已申請運回</option><option>已到貨</option></select></label></div>
       <div className="waybill-picker"><div className="waybill-picker-head"><div><strong>選擇這次一起運回的個別訂單</strong><span>可跨代購團選擇訂單，每份訂單就是一個包裹</span></div></div>{groups.map(group=><div className="waybill-group" key={group.id}><h4>{group.name}<small>{currencyInfo[group.currency].label}</small></h4>{group.orders.map(order=>{const key=`${group.id}-${order.id}`;const value=waybillItems[key]??{checked:false,weightG:0};return <label className="waybill-line order-level" key={key}><input type="checkbox" checked={value.checked} onChange={e=>setWaybillItems(current=>({...current,[key]:{...value,checked:e.target.checked}}))}/><span><b>{order.code}・{order.friend}</b><small>{order.lines.map(line=>`${group.products.find(product=>product.id===line.productId)?.name} × ${line.quantity}`).join("、")}</small></span><em>訂單包裹重量<input aria-label={`${order.code}包裹重量`} type="number" min="0" value={value.weightG||""} placeholder="g" disabled={!value.checked} onChange={e=>setWaybillItems(current=>({...current,[key]:{...value,weightG:Number(e.target.value)}}))}/></em></label>})}</div>)}</div>
-      <div className="form-row"><label>運單總重量（g）<input name="totalWeightG" type="number" min="0" required/><small>由妳自行填寫，不會用上方重量強制加總</small></label><label>本次國際運費（NT$）<input name="freightTwd" type="number" min="0" required/></label></div>
-      <div className="split-rule-card"><strong>國際運費由誰支付？</strong><div className={`form-row ${waybillFreightPayer==="朋友自行付清"?"":"two"}`}><label>負擔方式<select name="freightPayer" value={waybillFreightPayer} onChange={e=>setWaybillFreightPayer(e.target.value as FreightPayer)}><option>我代墊・需收款</option><option>朋友自行付清</option><option>我自行負擔</option></select></label>{waybillFreightPayer==="朋友自行付清"&&<label>付款朋友<select name="freightFriend" required><option value="">請選擇朋友</option>{friendList.map(friend=><option key={friend.id}>{friend.name}</option>)}</select></label>}{waybillFreightPayer==="我代墊・需收款"&&<label>運費應收台幣<input name="freightReceivableTwd" type="number" min="0" placeholder="0"/></label>}</div></div>
-      <div className="split-rule-card"><strong>商品實際寄到哪裡？</strong><div className={`form-row ${waybillDestination==="直寄朋友"?"":"one"}`}><label>收貨目的地<select name="destination" value={waybillDestination} onChange={e=>setWaybillDestination(e.target.value as Waybill["destination"])}><option>寄到我這裡</option><option>直寄朋友</option></select></label>{waybillDestination==="直寄朋友"&&<label>直寄收貨朋友<select name="recipientFriend" required><option value="">請選擇朋友</option>{friendList.map(friend=><option key={friend.id}>{friend.name}</option>)}</select></label>}</div><small>直寄朋友的訂單到貨後會直接標示已交付，不會再進入出貨管理。</small></div>
-      <div className="form-row"><label>申請運回日期<input name="appliedDate" type="date" required/></label><label>到貨日期<input name="arrivedDate" type="date"/></label></div><label>備註<input name="note" placeholder="例如：集運倉合箱、直寄小文"/></label><ModalActions onCancel={()=>setWaybillModalOpen(false)} submit="建立國際運單"/>
+      <div className="form-row"><label>運單總重量（g）<input name="totalWeightG" type="number" min="0" required defaultValue={waybills.find(item=>item.id===editingWaybillId)?.totalWeightG}/><small>由妳自行填寫，不會用上方重量強制加總</small></label><label>本次國際運費（NT$）<input name="freightTwd" type="number" min="0" required defaultValue={waybills.find(item=>item.id===editingWaybillId)?.freightTwd}/></label></div>
+      <div className="split-rule-card"><strong>國際運費由誰支付？</strong><div className={`form-row ${waybillFreightPayer==="朋友自行付清"?"":"two"}`}><label>負擔方式<select name="freightPayer" value={waybillFreightPayer} onChange={e=>setWaybillFreightPayer(e.target.value as FreightPayer)}><option>我代墊・需收款</option><option>朋友自行付清</option><option>我自行負擔</option></select></label>{waybillFreightPayer==="朋友自行付清"&&<label>付款朋友<select name="freightFriend" required defaultValue={waybills.find(item=>item.id===editingWaybillId)?.freightFriend}><option value="">請選擇朋友</option>{friendList.map(friend=><option key={friend.id}>{friend.name}</option>)}</select></label>}{waybillFreightPayer==="我代墊・需收款"&&<label>運費應收台幣<input name="freightReceivableTwd" type="number" min="0" placeholder="0" defaultValue={waybills.find(item=>item.id===editingWaybillId)?.freightReceivableTwd}/></label>}</div></div>
+      <div className="split-rule-card"><strong>商品實際寄到哪裡？</strong><div className={`form-row ${waybillDestination==="直寄朋友"?"":"one"}`}><label>收貨目的地<select name="destination" value={waybillDestination} onChange={e=>setWaybillDestination(e.target.value as Waybill["destination"])}><option>寄到我這裡</option><option>直寄朋友</option></select></label>{waybillDestination==="直寄朋友"&&<label>直寄收貨朋友<select name="recipientFriend" required defaultValue={waybills.find(item=>item.id===editingWaybillId)?.recipientFriend}><option value="">請選擇朋友</option>{friendList.map(friend=><option key={friend.id}>{friend.name}</option>)}</select></label>}</div><small>直寄朋友的訂單到貨後會直接標示已交付，不會再進入出貨管理。</small></div>
+      <div className="form-row"><label>申請運回日期<input name="appliedDate" type="date" required defaultValue={waybills.find(item=>item.id===editingWaybillId)?.appliedDate.replaceAll("/","-")}/></label><label>到貨日期<input name="arrivedDate" type="date" defaultValue={waybills.find(item=>item.id===editingWaybillId)?.arrivedDate.replaceAll("/","-")}/></label></div><label>備註<input name="note" placeholder="例如：集運倉合箱、直寄小文" defaultValue={waybills.find(item=>item.id===editingWaybillId)?.note}/></label><ModalActions onCancel={()=>{setWaybillModalOpen(false);setEditingWaybillId(null);}} submit={editingWaybillId ? "儲存運單變更" : "建立國際運單"}/>
     </form></Modal>}
-    {paymentModal === "income" && <Modal onClose={() => setPaymentModal(null)} eyebrow="NEW PAYMENT" title="新增收款紀錄" wide><form onSubmit={savePayment}><label>付款人<select required value={paymentFriend} onChange={e => { setPaymentFriend(e.target.value); setPaymentOrders([]); }}>{friendList.map(friend => <option key={friend.id}>{friend.name}</option>)}</select></label><div className="payment-order-picker"><strong>勾選這次支付的商品款或國際運費</strong>{groups.flatMap(group => group.orders.filter(order => order.friend === paymentFriend).map(order => ({group,order}))).map(({group,order}) => <label key={order.id}><input type="checkbox" checked={paymentOrders.includes(order.id)} onChange={e => setPaymentOrders(current => e.target.checked ? [...current,order.id] : current.filter(id => id !== order.id))}/><span><b>商品款・{group.name}</b><small>{order.code}・應收 NT${order.receivableTwd.toLocaleString()}</small></span></label>)}{waybills.filter(item=>item.freightFriend===paymentFriend&&item.freightReceivableTwd>0).map(item=><label key={`freight-${item.id}`}><input type="checkbox" checked={paymentOrders.includes(-item.id)} onChange={e=>setPaymentOrders(current=>e.target.checked?[...current,-item.id]:current.filter(id=>id!==-item.id))}/><span><b>國際運費・{item.code}</b><small>{item.country}運單・應收 NT${item.freightReceivableTwd.toLocaleString()}</small></span></label>)}</div><div className="selected-payment-total"><span>已勾選款項應收合計</span><strong>NT${(groups.flatMap(group=>group.orders).filter(order=>paymentOrders.includes(order.id)).reduce((sum,order)=>sum+order.receivableTwd,0)+waybills.filter(item=>paymentOrders.includes(-item.id)).reduce((sum,item)=>sum+item.freightReceivableTwd,0)).toLocaleString()}</strong></div><div className="form-row"><label>本次實收金額（NT$）<input name="amount" type="number" min="1" required /></label><label>收款日期<input name="date" type="date" required /></label></div><label>付款方式<select name="method"><option>銀行轉帳</option><option>LINE Pay</option><option>現金</option><option>其他</option></select></label><label>備註<input name="note" placeholder="例如：商品款與國際運費一起支付" /></label><ModalActions onCancel={() => setPaymentModal(null)} submit="儲存收款" /></form></Modal>}
+    {paymentModal === "income" && <Modal onClose={() => setPaymentModal(null)} eyebrow="NEW PAYMENT" title="新增收款紀錄" wide><form onSubmit={savePayment}><label>付款人<select required value={paymentFriend} onChange={e => { setPaymentFriend(e.target.value); setPaymentOrders([]); }}>{friendList.map(friend => <option key={friend.id}>{friend.name}</option>)}</select></label><div className="payment-order-picker"><strong>勾選這次支付的商品款或國際運費</strong>{groups.flatMap(group => group.orders.filter(order => order.friend === paymentFriend).map(order => ({group,order}))).map(({group,order}) => <label key={order.id}><input type="checkbox" checked={paymentOrders.includes(order.id)} onChange={e => setPaymentOrders(current => e.target.checked ? [...current,order.id] : current.filter(id => id !== order.id))}/><span><b>商品款・{group.name}</b><small>{order.code}・應收 NT${order.receivableTwd.toLocaleString()}</small></span></label>)}{waybills.filter(item=>item.freightFriend===paymentFriend&&item.freightReceivableTwd>0).map(item=><label key={`freight-${item.id}`}><input type="checkbox" checked={paymentOrders.includes(-item.id)} onChange={e=>setPaymentOrders(current=>e.target.checked?[...current,-item.id]:current.filter(id=>id!==-item.id))}/><span><b>國際運費・{item.code}</b><small>{item.country}運單・應收 NT${item.freightReceivableTwd.toLocaleString()}</small></span></label>)}</div><div className="selected-payment-total"><span>已勾選款項應收合計</span><strong>NT${(groups.flatMap(group=>group.orders).filter(order=>paymentOrders.includes(order.id)).reduce((sum,order)=>sum+order.receivableTwd,0)+waybills.filter(item=>paymentOrders.includes(-item.id)).reduce((sum,item)=>sum+item.freightReceivableTwd,0)).toLocaleString()}</strong></div><div className="form-row"><label>本次實收金額（NT$）<input name="amount" type="number" min="1" required /></label><label>收款日期<input name="date" type="date" required /></label></div><label>付款方式<select name="method">{settings.paymentMethods.map(method=><option key={method}>{method}</option>)}</select></label><label>備註<input name="note" placeholder="例如：商品款與國際運費一起支付" /></label><ModalActions onCancel={() => setPaymentModal(null)} submit="儲存收款" /></form></Modal>}
     {paymentModal === "expense" && <Modal onClose={() => setPaymentModal(null)} eyebrow="NEW EXPENSE" title="新增支出紀錄"><form onSubmit={saveExpense}><div className="form-row"><label>支出類別<select name="category"><option>商品款</option><option>國際運費</option><option>關稅</option><option>包材</option><option>其他</option></select></label><label>金額（NT$）<input name="amount" type="number" min="1" required /></label></div><label>所屬代購團<select name="group"><option>不指定代購團</option>{groups.map(group => <option key={group.id}>{group.name}</option>)}</select></label><label>支出日期<input name="date" type="date" required /></label><label>備註<input name="note" /></label><ModalActions onCancel={() => setPaymentModal(null)} submit="儲存支出" /></form></Modal>}
     {parcelModalOpen && <Modal onClose={() => setParcelModalOpen(false)} eyebrow="NEW PARCEL" title="建立出貨包裹" wide><form onSubmit={saveParcel}>
       <label>朋友<select required value={parcelFriend} onChange={e => { setParcelFriend(e.target.value); setParcelOrders([]); }}><option value="">請選擇朋友</option>{friendList.map(friend => <option key={friend.id}>{friend.name}</option>)}</select></label>
       <div className="parcel-order-picker"><strong>選擇要合併出貨的訂單</strong>{allOrders.filter(item => item.order.friend === parcelFriend && item.arrival === "已到貨" && !parcels.some(parcel => parcel.orderIds.includes(item.order.id))).map(({group,order}) => <label key={order.id}><input type="checkbox" checked={parcelOrders.includes(order.id)} onChange={e => setParcelOrders(current => e.target.checked ? [...current, order.id] : current.filter(id => id !== order.id))} /><span><b>{group.name}・{order.code}</b><small>{orderQuantity(order)} 件商品</small></span></label>)}{parcelFriend && !allOrders.some(item => item.order.friend === parcelFriend && item.arrival === "已到貨" && !parcels.some(parcel => parcel.orderIds.includes(item.order.id))) && <p>目前沒有可加入包裹的已到貨訂單</p>}</div>
-      <div className="form-row"><label>寄送方式<select name="method"><option>面交</option><option>賣貨便</option></select></label><label>台灣運費（NT$）<input name="shippingFee" type="number" min="0" defaultValue="0" /></label></div><div className="form-row"><label>預計出貨／面交日<input name="date" type="date" /></label><label>寄件編號<input name="tracking" placeholder="面交可留空" /></label></div><label>備註<input name="note" placeholder="例如：與下一團一起寄出" /></label><p className="form-hint">只有已到貨、尚未加入其他包裹的訂單會出現在清單中；同一位朋友可跨代購團合併出貨。</p><ModalActions onCancel={() => setParcelModalOpen(false)} submit="建立包裹" />
+      <div className="form-row"><label>寄送方式<select name="method">{settings.deliveryMethods.map(method=><option key={method}>{method}</option>)}</select></label><label>台灣運費（NT$）<input name="shippingFee" type="number" min="0" defaultValue="0" /></label></div><div className="form-row"><label>預計出貨／面交日<input name="date" type="date" /></label><label>寄件編號<input name="tracking" placeholder="面交可留空" /></label></div><label>備註<input name="note" defaultValue={settings.defaultShippingNote} placeholder="例如：與下一團一起寄出" /></label><p className="form-hint">只有已到貨、尚未加入其他包裹的訂單會出現在清單中；同一位朋友可跨代購團合併出貨。</p><ModalActions onCancel={() => setParcelModalOpen(false)} submit="建立包裹" />
     </form></Modal>}
     {notice && <div className="toast"><PackageCheck size={19} />{notice}</div>}
   </main>;
@@ -483,12 +497,12 @@ function PaymentsPage({ friends, groups, waybills, payments, expenses, tab, setT
       {tab==="應收款項" ? <div className="receivable-grid">{receivables.map(item=><article key={item.friend.id}><div className="receivable-head"><div className="friend-avatar">{item.friend.name.slice(0,1)}</div><div><h3>{item.friend.name}</h3><span>{item.orders.length} 筆商品款・{item.freight.length} 筆國際運費</span></div><OrderState value={item.balance===0?"已付款":item.paid>0?"部分付款":"未付款"}/></div><div className="receivable-orders">{item.orders.map(({group,order})=><div key={order.id}><span><b>商品款・{group.name}</b><small>{order.code}</small></span><strong>NT${order.receivableTwd.toLocaleString()}</strong></div>)}{item.freight.map(fee=><div key={`freight-${fee.id}`}><span><b>國際運費・{fee.code}</b><small>{fee.country}・{fee.destination}</small></span><strong>NT${fee.freightReceivableTwd.toLocaleString()}</strong></div>)}</div><div className="amount-row"><span>應收<strong>NT${item.due.toLocaleString()}</strong></span><span>已收<strong>NT${item.paid.toLocaleString()}</strong></span><span>尚欠<strong className={item.balance?"unpaid":"paid"}>NT${item.balance.toLocaleString()}</strong></span></div><div className="payment-progress"><i style={{width:`${item.due?Math.min(100,item.paid/item.due*100):0}%`}}/></div><button onClick={()=>onIncome(item.friend.name)}>新增這位朋友的收款 <ChevronRight size={16}/></button></article>)}</div> : <div className="table-wrap"><table className="payment-table"><thead><tr>{tab==="收款紀錄"?<><th>收款日期</th><th>付款人</th><th>支付款項</th><th>付款方式／備註</th><th>收款金額</th></>:<><th>支出日期</th><th>類別</th><th>所屬代購團</th><th>備註</th><th>支出金額</th></>}</tr></thead><tbody>{tab==="收款紀錄"?payments.map(record=><tr key={record.id}><td>{record.date}</td><td><strong>{record.friend}</strong></td><td>{[...groups.flatMap(group=>group.orders.filter(order=>record.orderIds.includes(order.id)).map(()=>`商品款・${group.name}`)),...waybills.filter(item=>record.orderIds.includes(-item.id)).map(item=>`國際運費・${item.code}`)].join("、")||"—"}</td><td>{record.method}{record.note?`・${record.note}`:""}</td><td><strong className="income-money">+ NT${record.amount.toLocaleString()}</strong></td></tr>):expenses.map(record=><tr key={record.id}><td>{record.date}</td><td><span className="expense-category">{record.category}</span></td><td>{record.group}</td><td>{record.note||"—"}</td><td><strong className="expense-money">− NT${record.amount.toLocaleString()}</strong></td></tr>)}</tbody></table></div>}
       <div className="table-footer">應收金額分別來自品項商品款與國際運單運費；朋友自行付清或妳自行負擔的款項不會列入</div></section></>;
 }
-function WaybillsPage({waybills,groups,onCreate}:{waybills:Waybill[];groups:Group[];onCreate:()=>void}) {
+function WaybillsPage({waybills,groups,onCreate}:{waybills:Waybill[];groups:Group[];onCreate:(waybillId?:number|null)=>void}) {
   const moving=waybills.filter(item=>item.status==="已申請運回"), arrived=waybills.filter(item=>item.status==="已到貨");
   const receivable=waybills.reduce((sum,item)=>sum+item.freightReceivableTwd,0);
   return <><div className="section-heading"><div><span className="eyebrow">INTERNATIONAL WAYBILLS</span><h2>國際運單</h2><p>管理韓國／日本集運回台灣的合併運單、重量、運費與實際收貨地</p></div><button className="mobile-add" onClick={onCreate}><Plus size={18}/>建立運單</button></div>
     <section className="stats-grid"><StatCard icon={<Globe2/>} tone="ice" label="國際運單" value={String(waybills.length)} note="可跨代購團合併"/><StatCard icon={<Truck/>} tone="amber" label="運回中" value={String(moving.length)} note="已申請、尚未抵達"/><StatCard icon={<PackageCheck/>} tone="mint" label="已到貨" value={String(arrived.length)} note="同步更新訂單貨態"/><StatCard icon={<CircleDollarSign/>} tone="lilac" label="運費待收" value={`NT$${receivable.toLocaleString()}`} note="僅計入我代墊的金額"/></section>
-    <section className="groups-section waybill-section"><div className="payment-panel-head"><div><h3>運單紀錄</h3><span>商品款、國際運費與收貨地分開判斷</span></div><button className="secondary-add" onClick={onCreate}><Plus size={16}/>建立運單</button></div><div className="waybill-grid">{waybills.map(item=>{const names=Array.from(new Set(item.items.map(ref=>groups.find(group=>group.id===ref.groupId)?.name).filter(Boolean)));return <article key={item.id}><div className="parcel-head"><div><span>{item.code}・{item.country}</span><h3>{item.tracking||"尚未填物流單號"}</h3></div><OrderState value={item.status}/></div><div className="waybill-route"><span>{item.destination}</span>{item.recipientFriend&&<b>收貨：{item.recipientFriend}</b>}</div><ul><li><span>包含內容</span><strong>{names.join("、")}・{item.items.length} 份訂單</strong></li><li><span>申報總重量</span><strong>{item.totalWeightG.toLocaleString()} g</strong></li><li><span>國際運費</span><strong>NT${item.freightTwd.toLocaleString()}</strong></li><li><span>運費負擔</span><strong>{item.freightPayer}{item.freightFriend?`・${item.freightFriend}`:""}</strong></li><li><span>運費應收</span><strong className={item.freightReceivableTwd?"income-money":""}>NT${item.freightReceivableTwd.toLocaleString()}</strong></li></ul><button>查看與編輯運單 <ChevronRight size={16}/></button></article>})}</div><div className="table-footer">運單到貨會更新所選個別訂單；代購團狀態依團內訂單自動顯示部分到貨或已全數到貨</div></section></>;
+    <section className="groups-section waybill-section"><div className="payment-panel-head"><div><h3>運單紀錄</h3><span>商品款、國際運費與收貨地分開判斷</span></div><button className="secondary-add" onClick={()=>onCreate()}><Plus size={16}/>建立運單</button></div><div className="waybill-grid">{waybills.map(item=>{const names=Array.from(new Set(item.items.map(ref=>groups.find(group=>group.id===ref.groupId)?.name).filter(Boolean)));return <article key={item.id}><div className="parcel-head"><div><span>{item.code}・{item.country}</span><h3>{item.tracking||"尚未填物流單號"}</h3></div><OrderState value={item.status}/></div><div className="waybill-route"><span>{item.destination}</span>{item.recipientFriend&&<b>收貨：{item.recipientFriend}</b>}</div><ul><li><span>包含內容</span><strong>{names.join("、")}・{item.items.length} 份訂單</strong></li><li><span>申報總重量</span><strong>{item.totalWeightG.toLocaleString()} g</strong></li><li><span>國際運費</span><strong>NT${item.freightTwd.toLocaleString()}</strong></li><li><span>運費負擔</span><strong>{item.freightPayer}{item.freightFriend?`・${item.freightFriend}`:""}</strong></li><li><span>運費應收</span><strong className={item.freightReceivableTwd?"income-money":""}>NT${item.freightReceivableTwd.toLocaleString()}</strong></li></ul><button onClick={()=>onCreate(item.id)}>查看與編輯運單 <ChevronRight size={16}/></button></article>})}</div><div className="table-footer">運單到貨會更新所選個別訂單；代購團狀態依團內訂單自動顯示部分到貨或已全數到貨</div></section></>;
 }
 function ShippingPage({ orders, parcels, tab, setTab, onCreate }: { orders: OrderView[]; parcels: Parcel[]; tab: "待到齊" | "可出貨" | "包裹紀錄"; setTab: (tab: "待到齊" | "可出貨" | "包裹紀錄") => void; onCreate: (friend?: string) => void }) {
   const shippedIds = new Set(parcels.flatMap(parcel => parcel.orderIds));
@@ -537,19 +551,21 @@ function LoginPage({ onSubmit, error }: { onSubmit: (event: FormEvent<HTMLFormEl
     <small>登入狀態會在此瀏覽器保留 1 小時</small>
   </section></main>;
 }
-function SettingsPage({ groups, friends, payments, expenses, parcels, onSavePassword, onNotice }: { groups: Group[]; friends: Friend[]; payments: PaymentRecord[]; expenses: ExpenseRecord[]; parcels: Parcel[]; onSavePassword: (password: string) => Promise<void>; onNotice: (message: string) => void }) {
-  const [adminName, setAdminName] = useState("Jiin");
-  const [siteName, setSiteName] = useState("哈娜的小車車");
+function SettingsPage({ groups, friends, payments, expenses, parcels, settings, onSave, onSavePassword, onNotice }: { groups: Group[]; friends: Friend[]; payments: PaymentRecord[]; expenses: ExpenseRecord[]; parcels: Parcel[]; settings: AppSettings; onSave: (settings: AppSettings) => void; onSavePassword: (password: string) => Promise<void>; onNotice: (message: string) => void }) {
+  const [adminName, setAdminName] = useState(settings.adminName);
+  const [siteName, setSiteName] = useState(settings.siteName);
   const [password, setPassword] = useState("");
-  const [orderPrefix, setOrderPrefix] = useState("ORDER");
-  const [thousands, setThousands] = useState(true);
-  const [paymentMethods, setPaymentMethods] = useState(["銀行轉帳", "LINE Pay"]);
-  const [deliveryMethods, setDeliveryMethods] = useState(["面交", "賣貨便"]);
+  const [orderPrefix, setOrderPrefix] = useState(settings.orderPrefix);
+  const [amountDisplay, setAmountDisplay] = useState(settings.amountDisplay);
+  const [thousands, setThousands] = useState(settings.thousands);
+  const [paymentMethods, setPaymentMethods] = useState(settings.paymentMethods);
+  const [deliveryMethods, setDeliveryMethods] = useState<string[]>(settings.deliveryMethods);
+  const [defaultShippingNote, setDefaultShippingNote] = useState(settings.defaultShippingNote);
   const toggle = (value: string, values: string[], setter: (items: string[]) => void) => setter(values.includes(value) ? values.filter(item => item !== value) : [...values, value]);
   const orderCount = groups.reduce((sum, group) => sum + group.orders.length, 0);
   const records = groups.length + orderCount + friends.length + payments.length + expenses.length + parcels.length;
   return <>
-    <div className="section-heading settings-heading"><div><span className="eyebrow">SETTINGS</span><h2>設定</h2><p>管理後台顯示、常用選項與資料備份</p></div><button className="primary-button settings-save" onClick={() => onNotice("設定已儲存（介面確認版）")}><Save size={18}/>儲存設定</button></div>
+    <div className="section-heading settings-heading"><div><span className="eyebrow">SETTINGS</span><h2>設定</h2><p>管理後台顯示、常用選項與資料備份</p></div><button className="primary-button settings-save" onClick={() => onSave({ siteName: siteName.trim() || "哈娜的小車車", adminName: adminName.trim() || "Jiin", orderPrefix: orderPrefix.trim().toUpperCase() || "ORDER", amountDisplay, thousands, paymentMethods, deliveryMethods: deliveryMethods as DeliveryMethod[], defaultShippingNote })}><Save size={18}/>儲存設定</button></div>
     <div className="settings-layout">
       <div className="settings-main">
         <SettingsCard icon={<Settings/>} title="基本設定" note="調整後台中顯示的名稱">
@@ -561,13 +577,13 @@ function SettingsPage({ groups, friends, payments, expenses, parcels, onSavePass
           <p className="security-note">帳密由 Firebase Authentication 驗證；雲端資料僅限此管理員帳號讀寫。</p>
         </SettingsCard>
         <SettingsCard icon={<CircleDollarSign/>} title="款項與顯示格式" note="設定新增收款時使用的常用選項">
-          <div className="settings-form two"><label>訂單編號前綴<input value={orderPrefix} onChange={e=>setOrderPrefix(e.target.value.toUpperCase())}/><small>預覽：{orderPrefix || "ORDER"} 01</small></label><label>金額顯示<select defaultValue="original"><option value="original">依代購團原幣顯示</option><option value="twd">統一顯示新台幣</option></select></label></div>
+          <div className="settings-form two"><label>訂單編號前綴<input value={orderPrefix} onChange={e=>setOrderPrefix(e.target.value.toUpperCase())}/><small>預覽：{orderPrefix || "ORDER"} 01</small></label><label>金額顯示<select value={amountDisplay} onChange={e=>setAmountDisplay(e.target.value as AppSettings["amountDisplay"])}><option value="original">依代購團原幣顯示</option><option value="twd">統一顯示新台幣</option></select></label></div>
           <div className="setting-option-row"><div><strong>金額使用千分位</strong><span>例如：NT$12,800</span></div><button className={`switch ${thousands?"on":""}`} onClick={()=>setThousands(!thousands)} aria-label="切換金額千分位"><i/></button></div>
           <ChoiceChips label="常用付款方式" options={["銀行轉帳","LINE Pay","現金","其他"]} values={paymentMethods} onToggle={value=>toggle(value,paymentMethods,setPaymentMethods)}/>
         </SettingsCard>
         <SettingsCard icon={<Truck/>} title="出貨選項" note="建立包裹時顯示的交付方式">
           <ChoiceChips label="可選擇的交付方式" options={["面交","賣貨便"]} values={deliveryMethods} onToggle={value=>toggle(value,deliveryMethods,setDeliveryMethods)}/>
-          <label className="full-setting-label">預設出貨備註<input placeholder="例如：商品寄出後請留意取件通知"/></label>
+          <label className="full-setting-label">預設出貨備註<input value={defaultShippingNote} onChange={e=>setDefaultShippingNote(e.target.value)} placeholder="例如：商品寄出後請留意取件通知"/></label>
         </SettingsCard>
       </div>
       <aside className="settings-side">

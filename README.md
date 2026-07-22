@@ -6,7 +6,7 @@
 
 正式資料版已串接 Firebase Authentication 與 Cloud Firestore：
 
-- 使用 `hannna` 帳號登入，密碼由 Firebase 安全驗證
+- 使用管理者帳號登入，密碼由 Firebase 安全驗證
 - 代購團、訂單、朋友、款項、支出、運單與包裹自動同步至雲端
 - Firestore 規則僅允許指定管理員 UID 讀寫
 - 已移除第一版測試帳密與全部示範資料
