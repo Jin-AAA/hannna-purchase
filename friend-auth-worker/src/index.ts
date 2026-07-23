@@ -149,6 +149,22 @@ async function accountExists(env: Env, uid: string) {
   return Array.isArray(result.users) && result.users.length > 0;
 }
 
+type AuthUser = { localId?: string; disabled?: boolean; lastLoginAt?: string };
+
+async function lookupAccounts(env: Env, localIds: string[]): Promise<AuthUser[]> {
+  if (!localIds.length) return [];
+  const result = await authRequest(env, "lookup", { localId: localIds });
+  return Array.isArray(result.users) ? result.users as AuthUser[] : [];
+}
+
+async function accountState(env: Env, friendId: string) {
+  const [user] = await lookupAccounts(env, [friendUid(friendId)]);
+  return {
+    portalStatus: !user ? "尚未設定" : user.disabled ? "已停用" : "已設定",
+    lastLoginAt: user?.lastLoginAt ? new Date(Number(user.lastLoginAt)).toISOString() : undefined,
+  } satisfies { portalStatus: PortalStatus; lastLoginAt?: string };
+}
+
 async function createAccount(env: Env, friendId: string, password: string) {
   if (await accountExists(env, friendUid(friendId))) throw Object.assign(new Error("Account is already configured"), { status: 409 });
   return authRequest(env, "create", { localId: friendUid(friendId), email: friendEmail(friendId), emailVerified: true, password, disabled: false });
@@ -172,12 +188,7 @@ async function updatePortalStatus(env: Env, friendId: string, portalStatus: Port
 }
 
 async function getStatus(env: Env, friendId: string): Promise<PortalStatus> {
-  const token = await accessToken(env);
-  const response = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/friendViews/${friendId}?mask.fieldPaths=portalStatus`, { headers: { authorization: `Bearer ${token}` } });
-  if (response.status === 404) throw Object.assign(new Error("Friend not found"), { status: 404 });
-  if (!response.ok) throw new Error("Unable to read friend status");
-  const data = await response.json<{ fields?: { portalStatus?: { stringValue?: PortalStatus } } }>();
-  return data.fields?.portalStatus?.stringValue ?? "尚未設定";
+  return (await accountState(env, friendId)).portalStatus;
 }
 
 async function listFriends(env: Env) {
@@ -185,12 +196,18 @@ async function listFriends(env: Env) {
   const response = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/friendViews?pageSize=200&mask.fieldPaths=friendId&mask.fieldPaths=name&mask.fieldPaths=portalStatus`, { headers: { authorization: `Bearer ${token}` } });
   if (!response.ok) throw new Error("Unable to read friend directory");
   const data = await response.json<{ documents?: Array<{ fields?: Record<string, { stringValue?: string; integerValue?: string }> }> }>();
-  return (data.documents ?? []).flatMap(document => {
+  const friends = (data.documents ?? []).flatMap(document => {
     const fields = document.fields ?? {};
     const id = fields.friendId?.integerValue ?? fields.friendId?.stringValue;
     const name = fields.name?.stringValue;
-    const status = fields.portalStatus?.stringValue as PortalStatus | undefined;
-    return id && name ? [{ id, name, status: status ?? "尚未設定" }] : [];
+    return id && name ? [{ id, name }] : [];
+  });
+  const users = await lookupAccounts(env, friends.map(friend => friendUid(friend.id)));
+  const usersById = new Map(users.map(user => [user.localId, user]));
+  return friends.map(friend => {
+    const user = usersById.get(friendUid(friend.id));
+    const status: PortalStatus = !user ? "尚未設定" : user.disabled ? "已停用" : "已設定";
+    return { ...friend, status };
   }).sort((a, b) => a.name.localeCompare(b.name, "zh-Hant"));
 }
 
@@ -215,6 +232,21 @@ async function route(request: Request, env: Env) {
     return json({ friends: await listFriends(env) });
   }
 
+  if (request.method === "GET" && url.pathname === "/admin/friends/auth-state") {
+    await requireAdmin(request, env);
+    const friends = await listFriends(env);
+    const users = await lookupAccounts(env, friends.map(friend => friendUid(friend.id)));
+    const usersById = new Map(users.map(user => [user.localId, user]));
+    return json({ friends: friends.map(friend => {
+      const user = usersById.get(friendUid(friend.id));
+      return {
+        id: friend.id,
+        portalStatus: !user ? "尚未設定" : user.disabled ? "已停用" : "已設定",
+        lastLoginAt: user?.lastLoginAt ? new Date(Number(user.lastLoginAt)).toISOString() : undefined,
+      };
+    }) });
+  }
+
   if (request.method === "GET" && statusMatch && validFriendId(statusMatch[1])) {
     return json({ status: await getStatus(env, statusMatch[1]) });
   }
@@ -228,7 +260,8 @@ async function route(request: Request, env: Env) {
     } else {
       await createAccount(env, friendId, await firebasePassword(friendId, body.password));
     }
-    await updatePortalStatus(env, friendId, "已設定");
+    try { await updatePortalStatus(env, friendId, "已設定"); }
+    catch (error) { console.error(JSON.stringify({ event: "friend-status-sync-warning", friendId, message: error instanceof Error ? error.message : "unknown" })); }
     return json({ ok: true, customToken: await customToken(env, friendId) });
   }
   if (request.method === "POST" && loginMatch && validFriendId(loginMatch[1])) {
@@ -249,7 +282,8 @@ async function route(request: Request, env: Env) {
   if (request.method === "POST" && lastLoginMatch && validFriendId(lastLoginMatch[1])) {
     const friendId = lastLoginMatch[1];
     await requireFriend(request, env, friendId);
-    await updateLastLogin(env, friendId);
+    try { await updateLastLogin(env, friendId); }
+    catch (error) { console.error(JSON.stringify({ event: "friend-login-time-sync-warning", friendId, message: error instanceof Error ? error.message : "unknown" })); }
     return json({ ok: true });
   }
   if (request.method === "POST" && adminMatch && validFriendId(adminMatch[1])) {
@@ -259,10 +293,12 @@ async function route(request: Request, env: Env) {
       const body = await request.json<{ password?: unknown }>();
       if (!validPassword(body.password)) return json({ error: "密碼需為 4～72 個字元" }, 400);
       await setAccount(env, friendId, { password: await firebasePassword(friendId, body.password), disabled: false }, true);
-      await updatePortalStatus(env, friendId, "已設定");
+      try { await updatePortalStatus(env, friendId, "已設定"); }
+      catch (error) { console.error(JSON.stringify({ event: "friend-status-sync-warning", friendId, message: error instanceof Error ? error.message : "unknown" })); }
     } else {
       await setAccount(env, friendId, { disabled: action === "suspend" }, false);
-      await updatePortalStatus(env, friendId, action === "suspend" ? "已停用" : "已設定");
+      try { await updatePortalStatus(env, friendId, action === "suspend" ? "已停用" : "已設定"); }
+      catch (error) { console.error(JSON.stringify({ event: "friend-status-sync-warning", friendId, message: error instanceof Error ? error.message : "unknown" })); }
     }
     return json({ ok: true });
   }

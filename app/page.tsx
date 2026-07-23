@@ -205,6 +205,37 @@ export default function Home() {
   }, [isAuthenticated, dataLoaded]);
 
   useEffect(() => {
+    if (!isAuthenticated || !dataLoaded || !friendAuthApi || !auth.currentUser) return;
+    let cancelled = false;
+    const syncAuthState = async () => {
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) return;
+        const response = await fetch(`${friendAuthApi}/admin/friends/auth-state`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error("request failed");
+        const result = await response.json() as { friends?: Array<{ id: string; portalStatus: FriendPortalStatus; lastLoginAt?: string }> };
+        if (cancelled) return;
+        const remote = new Map((result.friends ?? []).map(friend => [Number(friend.id), friend]));
+        setFriendList(current => current.map(friend => {
+          const state = remote.get(friend.id);
+          if (!state) return friend;
+          return friend.portalStatus === state.portalStatus && friend.lastLoginAt === state.lastLoginAt
+            ? friend
+            : { ...friend, portalStatus: state.portalStatus, lastLoginAt: state.lastLoginAt };
+        }));
+      } catch {
+        // Firestore snapshot remains available as a fallback; retry on the next interval.
+      }
+    };
+    void syncAuthState();
+    const timer = window.setInterval(() => void syncAuthState(), 15000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [isAuthenticated, dataLoaded]);
+
+  useEffect(() => {
     if (!isAuthenticated || !dataLoaded) return;
     const timer = window.setTimeout(() => {
       void setDoc(doc(db, "admin", "state"), {
