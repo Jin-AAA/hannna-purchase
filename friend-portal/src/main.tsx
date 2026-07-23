@@ -11,7 +11,7 @@ type FriendOption = { id: string; name: string; status: PortalStatus };
 type Product = { id: number; name: string; unitPrice: number };
 type Line = { productId: number; quantity: number; receivableTwd: number; arrival?: string };
 type Order = { id: number; code: string; friend: string; lines: Line[]; receivableTwd: number };
-type Group = { id: number; name: string; currency: "KRW" | "JPY" | "TWD"; products: Product[]; orders: Order[] };
+type Group = { id: number; name: string; currency: "KRW" | "JPY" | "CNY" | "TWD"; products: Product[]; orders: Order[] };
 type Payment = { id: number; amount: number; date: string; method: string; orderIds: number[] };
 type Waybill = { id: number; code: string; tracking: string; status: string; destination: string; items: Array<{ orderId: number; receivableFreightTwd?: number }> };
 type Parcel = { id: number; code: string; orderIds: number[]; method: string; shippingFee: number; tracking: string; date: string; status: string };
@@ -75,8 +75,10 @@ function App() {
     });
     return base.map(item => {
       const paidAmount = Math.min(item.totalDue, paid.get(item.order.id) ?? 0);
-      const balance = Math.max(0, item.totalDue - paidAmount);
-      const paymentStatus: PortalOrder["paymentStatus"] = balance < .5 ? "已付款" : paidAmount > .5 ? "部分付款" : "未付款";
+      const productSettled = view.payments.some(payment => payment.orderIds.includes(item.order.id));
+      const freightSettled = item.freightDue <= 0 || view.payments.some(payment => payment.orderIds.includes(-item.order.id));
+      const balance = (productSettled ? 0 : item.productDue) + (freightSettled ? 0 : item.freightDue);
+      const paymentStatus: PortalOrder["paymentStatus"] = balance < .5 ? "已付款" : productSettled || freightSettled || paidAmount > .5 ? "部分付款" : "未付款";
       const arrivals = item.order.lines.map(line => line.arrival ?? "未到貨");
       const arrival = arrivals.every(value => value === "已到貨") ? "已到貨" : arrivals.some(value => value === "已到貨") ? "部分到貨" : item.waybill?.status ?? "未到貨";
       const shipping = item.parcel?.status ?? (arrival === "已到貨" ? "待出貨" : "待到貨");
