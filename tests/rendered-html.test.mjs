@@ -42,16 +42,21 @@ test("editing a legacy waybill is not blocked by newly required fields", async (
   assert.match(source, /rawArrivedDate \|\| dateInputValue\(existing\?\.arrivedDate\) \|\| todayInputValue\(\)/);
 });
 
-test("saving a waybill writes only the collections changed by that operation", async () => {
+test("saving a waybill updates local state and lets the shared cloud sync persist it", async () => {
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const saveWaybill = source.slice(
-    source.indexOf("async function saveWaybill"),
+    source.indexOf("function saveWaybill"),
     source.indexOf("if (!authChecked"),
   );
 
-  assert.match(saveWaybill, /updateDoc\(doc\(db, "admin", "state"\)/);
-  assert.match(saveWaybill, /groups: withoutUndefined\(nextGroups\)/);
-  assert.match(saveWaybill, /waybills: withoutUndefined\(nextWaybills\)/);
-  assert.doesNotMatch(saveWaybill, /friends: friendList/);
-  assert.doesNotMatch(saveWaybill, /payments, expenses, parcels/);
+  assert.match(saveWaybill, /setGroups\(nextGroups\)/);
+  assert.match(saveWaybill, /setWaybills\(nextWaybills\)/);
+  assert.doesNotMatch(saveWaybill, /await updateDoc/);
+});
+
+test("waybill order weight keeps numeric zero instead of rendering it as blank", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /value=\{value\.weightG\}/);
+  assert.doesNotMatch(source, /value=\{value\.weightG\|\|""\}/);
 });
