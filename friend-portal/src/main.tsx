@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ChevronDown, ChevronLeft, ChevronUp, KeyRound, LogOut, PackageCheck, ReceiptText, Truck } from "lucide-react";
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
+import { onAuthStateChanged, signInWithCustomToken, signOut, type User } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
 import "./styles.css";
@@ -20,15 +20,6 @@ type PortalOrder = { group: Group; order: Order; productDue: number; freightDue:
 
 const api = (import.meta.env.VITE_FRIEND_AUTH_API as string | undefined)?.replace(/\/$/, "") ?? "";
 const money = (value: number) => `NT$ ${Math.max(0, Math.round(value)).toLocaleString("zh-TW")}`;
-const friendEmail = (id: string) => `friend-${id}@hannna-purchase.local`;
-
-async function firebasePassword(friendId: string | number, password: string) {
-  if (password.length >= 6) return password;
-  const bytes = new TextEncoder().encode(`hannna-short-password-v1:${friendId}:${password}`);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
-}
-
 async function request(path: string, init?: RequestInit) {
   if (!api) throw new Error("朋友端驗證服務尚未設定");
   const response = await fetch(`${api}${path}`, init);
@@ -115,8 +106,12 @@ function App() {
     if (selected.status === "尚未設定" && password !== confirm) return setError("兩次輸入的密碼不一致");
     setBusy(true); setError("");
     try {
-      if (selected.status === "尚未設定") await request(`/friends/${selected.id}/setup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) });
-      await signInWithEmailAndPassword(auth, friendEmail(selected.id), await firebasePassword(selected.id, password));
+      const result = await request(`/friends/${selected.id}/${selected.status === "尚未設定" ? "setup" : "login"}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password }),
+      }) as { customToken: string };
+      await signInWithCustomToken(auth, result.customToken);
     } catch (reason) {
       setError(reason instanceof Error
         ? reason.message

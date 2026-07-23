@@ -4,6 +4,7 @@ compatibility_date = "2026-07-20"
 
 [vars]
 FIREBASE_PROJECT_ID = "hannna-purchase"
+FIREBASE_WEB_API_KEY = "AIzaSyDmg7pJm4krC_q2rXR5u7dvCZZ0NgkGSNI"
 ADMIN_ORIGIN = "https://jin-aaa.github.io"
 FRIEND_ORIGIN = "https://hannna-orders.web.app"
 

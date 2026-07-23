@@ -2,6 +2,7 @@ import { SignJWT, importPKCS8, importX509, jwtVerify, type JWTPayload } from "jo
 
 interface Env {
   FIREBASE_PROJECT_ID: string;
+  FIREBASE_WEB_API_KEY: string;
   FIREBASE_CLIENT_EMAIL: string;
   FIREBASE_PRIVATE_KEY: string;
   ADMIN_UID: string;
@@ -88,6 +89,41 @@ async function accessToken(env: Env) {
   return (await response.json<{ access_token: string }>()).access_token;
 }
 
+async function customToken(env: Env, friendId: string) {
+  const now = Math.floor(Date.now() / 1000);
+  const privateKey = await importPKCS8(env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"), "RS256");
+  return new SignJWT({ uid: friendUid(friendId) })
+    .setProtectedHeader({ alg: "RS256", typ: "JWT" })
+    .setIssuer(env.FIREBASE_CLIENT_EMAIL)
+    .setSubject(env.FIREBASE_CLIENT_EMAIL)
+    .setAudience("https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit")
+    .setIssuedAt(now)
+    .setExpirationTime(now + 3600)
+    .sign(privateKey);
+}
+
+async function verifyPassword(env: Env, friendId: string, password: string) {
+  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(env.FIREBASE_WEB_API_KEY)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      email: friendEmail(friendId),
+      password: await firebasePassword(friendId, password),
+      returnSecureToken: true,
+    }),
+  });
+  const result = await response.json<{ localId?: string; error?: { message?: string } }>();
+  if (!response.ok || result.localId !== friendUid(friendId)) {
+    const code = result.error?.message?.split(" : ")[0] ?? "INVALID_LOGIN_CREDENTIALS";
+    const disabled = code === "USER_DISABLED";
+    throw Object.assign(new Error(disabled ? "這個帳號目前已暫停登入" : "密碼不正確，請再試一次"), {
+      status: disabled ? 403 : 401,
+      code,
+      operation: "login",
+    });
+  }
+}
+
 type AuthMethod = "create" | "lookup" | "update";
 
 async function authRequest(env: Env, method: AuthMethod, body: Record<string, unknown>) {
@@ -171,6 +207,7 @@ async function route(request: Request, env: Env) {
   const adminMatch = url.pathname.match(/^\/admin\/friends\/(\d+)\/(password|suspend|resume)$/);
   const statusMatch = url.pathname.match(/^\/friends\/(\d+)\/status$/);
   const setupMatch = url.pathname.match(/^\/friends\/(\d+)\/setup$/);
+  const loginMatch = url.pathname.match(/^\/friends\/(\d+)\/login$/);
   const passwordMatch = url.pathname.match(/^\/friends\/(\d+)\/password$/);
   const lastLoginMatch = url.pathname.match(/^\/friends\/(\d+)\/last-login$/);
 
@@ -186,11 +223,20 @@ async function route(request: Request, env: Env) {
     if (await getStatus(env, friendId) !== "尚未設定") return json({ error: "帳號已經設定完成" }, 409);
     const body = await request.json<{ password?: unknown }>();
     if (!validPassword(body.password)) return json({ error: "密碼需為 4～72 個字元" }, 400);
-    if (!(await accountExists(env, friendUid(friendId)))) {
+    if (await accountExists(env, friendUid(friendId))) {
+      await verifyPassword(env, friendId, body.password);
+    } else {
       await createAccount(env, friendId, await firebasePassword(friendId, body.password));
     }
     await updatePortalStatus(env, friendId, "已設定");
-    return json({ ok: true, email: friendEmail(friendId) });
+    return json({ ok: true, customToken: await customToken(env, friendId) });
+  }
+  if (request.method === "POST" && loginMatch && validFriendId(loginMatch[1])) {
+    const friendId = loginMatch[1];
+    const body = await request.json<{ password?: unknown }>();
+    if (!validPassword(body.password)) return json({ error: "密碼需為 4～72 個字元" }, 400);
+    await verifyPassword(env, friendId, body.password);
+    return json({ ok: true, customToken: await customToken(env, friendId) });
   }
   if (request.method === "POST" && passwordMatch && validFriendId(passwordMatch[1])) {
     const friendId = passwordMatch[1];
