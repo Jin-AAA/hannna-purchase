@@ -8,7 +8,7 @@ import {
   UserRound, UsersRound, X, Pencil, Download, Database, Save, AlertTriangle, LogOut, LockKeyhole,
 } from "lucide-react";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, updatePassword } from "firebase/auth";
-import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
 type GroupStatus = "待下單" | "待到貨" | "部分到貨" | "已到貨" | "出貨中" | "部分出貨" | "已出貨" | "已完成";
@@ -547,16 +547,18 @@ export default function Home() {
     const nextWaybills = existing ? waybills.map(item => item.id === existing.id ? value : item) : [value,...waybills];
     const nextGroups = groups.map(group => { const orders=group.orders.map(order => { const refs=effectiveWaybills.filter(waybill=>waybill.items.some(item=>item.groupId===group.id&&item.orderId===order.id)); const arrived=refs.find(waybill=>waybill.status==="已到貨"); const moving=refs.find(waybill=>waybill.status==="已申請運回"); const active=arrived??moving; const lines=order.lines.map(line => active ? {...line, arrival: arrived ? "已到貨" as const : "運回中" as const, deliveryRoute: active.destination} : withoutUndefined({...line,arrival:undefined,deliveryRoute:undefined})); return withoutUndefined({...order, lines, arrival: arrived ? "已到貨" as const : "未到貨" as const}); }); const lines=orders.flatMap(order=>order.lines); const arrivedCount=lines.filter(line=>line.arrival==="已到貨").length; const movingCount=lines.filter(line=>line.arrival==="運回中").length; const groupStatus:GroupStatus=arrivedCount===lines.length&&lines.length?"已到貨":arrivedCount>0?"部分到貨":movingCount>0?"待到貨":group.status; return {...group,orders,status:groupStatus}; });
     try {
-      await setDoc(doc(db, "admin", "state"), {
-        ...withoutUndefined({ groups: nextGroups, friends: friendList, payments, expenses, parcels, waybills: nextWaybills, settings }),
+      await updateDoc(doc(db, "admin", "state"), {
+        groups: withoutUndefined(nextGroups),
+        waybills: withoutUndefined(nextWaybills),
         updatedAt: serverTimestamp(),
       });
       setGroups(nextGroups);
       setWaybills(nextWaybills);
       setWaybillModalOpen(false); setEditingWaybillId(null);
       showNotice(existing ? "已更新國際運單並儲存至雲端" : status === "已到貨" ? `已建立運單，並同步更新 ${items.length} 份訂單為已到貨` : "已建立國際運單並儲存至雲端");
-    } catch {
-      showNotice("運單儲存失敗，請確認網路後再試一次");
+    } catch (error) {
+      const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
+      showNotice(code ? `運單儲存失敗（${code}），請稍後再試一次` : "運單儲存失敗，請稍後再試一次");
     }
   }
 
