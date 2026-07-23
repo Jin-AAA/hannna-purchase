@@ -81,13 +81,23 @@ async function accessToken(env: Env) {
   return (await response.json<{ access_token: string }>()).access_token;
 }
 
-async function authRequest(env: Env, method: string, body: Record<string, unknown>) {
+type AuthMethod = "create" | "lookup" | "update";
+
+async function authRequest(env: Env, method: AuthMethod, body: Record<string, unknown>) {
   const token = await accessToken(env);
-  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/accounts:${method}`, {
+  const operation = method === "create" ? "accounts" : `accounts:${method}`;
+  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/${operation}`, {
     method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body),
   });
   const result = await response.json<Record<string, unknown>>();
-  if (!response.ok) throw Object.assign(new Error("Account operation failed"), { status: response.status, details: result });
+  if (!response.ok) {
+    const apiError = result.error as { status?: string; message?: string } | undefined;
+    throw Object.assign(new Error(apiError?.message ?? "Account operation failed"), {
+      status: response.status,
+      code: apiError?.status ?? "AUTH_ACCOUNT_OPERATION_FAILED",
+      operation: method,
+    });
+  }
   return result;
 }
 
@@ -98,7 +108,7 @@ async function accountExists(env: Env, uid: string) {
 
 async function createAccount(env: Env, friendId: string, password: string) {
   if (await accountExists(env, friendUid(friendId))) throw Object.assign(new Error("Account is already configured"), { status: 409 });
-  return authRequest(env, "signUp", { localId: friendUid(friendId), email: friendEmail(friendId), emailVerified: true, password, disabled: false });
+  return authRequest(env, "create", { localId: friendUid(friendId), email: friendEmail(friendId), emailVerified: true, password, disabled: false });
 }
 
 async function setAccount(env: Env, friendId: string, values: { password?: string; disabled?: boolean }, createIfMissing = true) {
@@ -106,7 +116,7 @@ async function setAccount(env: Env, friendId: string, values: { password?: strin
   if (await accountExists(env, localId)) return authRequest(env, "update", { localId, ...values });
   if (!createIfMissing) throw Object.assign(new Error("Account is not configured"), { status: 409 });
   if (!values.password) throw Object.assign(new Error("Password is required for a new account"), { status: 409 });
-  return authRequest(env, "signUp", { localId, email: friendEmail(friendId), emailVerified: true, password: values.password, disabled: values.disabled ?? false });
+  return authRequest(env, "create", { localId, email: friendEmail(friendId), emailVerified: true, password: values.password, disabled: values.disabled ?? false });
 }
 
 async function updatePortalStatus(env: Env, friendId: string, portalStatus: PortalStatus) {
@@ -215,8 +225,19 @@ export default {
       return response;
     } catch (error) {
       if (error instanceof Response) return new Response(error.body, { status: error.status, headers });
-      const status = (error as { status?: number }).status ?? 500;
-      return json({ error: status >= 500 ? "服務暫時無法使用" : (error as Error).message }, status, headers);
+      const failure = error as Error & { status?: number; code?: string; operation?: string };
+      const status = failure.status ?? 500;
+      console.error(JSON.stringify({
+        event: "friend-auth-error",
+        method: request.method,
+        path: new URL(request.url).pathname,
+        status,
+        code: failure.code ?? "INTERNAL_ERROR",
+        operation: failure.operation,
+        message: failure.message,
+      }));
+      const message = status >= 500 ? "服務暫時無法使用，請稍後再試" : failure.message;
+      return json({ error: message }, status, headers);
     }
   },
 };

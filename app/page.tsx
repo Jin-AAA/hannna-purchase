@@ -23,7 +23,7 @@ type ShippingStatus = "待到貨" | "待出貨" | "已出貨";
 type Order = { id: number; code: string; friend: string; lines: OrderLine[]; receivableTwd: number; payment?: PaymentStatus; arrival?: ArrivalStatus; shipping?: ShippingStatus };
 type Group = { id: number; name: string; saleDate: string; currency: Currency; status: GroupStatus; products: Product[]; giftRules: GiftRule[]; orders: Order[] };
 type FriendPortalStatus = "尚未設定" | "已設定" | "已停用";
-type Friend = { id: number; name: string; note: string; portalNote?: string; portalStatus?: FriendPortalStatus; lastLoginAt?: string };
+type Friend = { id: number; name: string; note: string; portalNote?: string; portalStatus?: FriendPortalStatus; lastLoginAt?: string; previousNames?: string[] };
 type PaymentRecord = { id: number; friend: string; amount: number; date: string; method: string; note: string; orderIds: number[] };
 type ExpenseRecord = { id: number; category: string; amount: number; date: string; group: string; note: string };
 type DeliveryMethod = "面交" | "賣貨便";
@@ -64,6 +64,40 @@ const earnedGifts = (group: Group, total: number) => group.giftRules.flatMap(rul
 });
 const withoutUndefined = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const friendAuthApi = process.env.NEXT_PUBLIC_FRIEND_AUTH_API?.replace(/\/$/, "") ?? "";
+const oneTimeFriendNameMigrations: Record<string, string> = { "我自己": "哈娜本人" };
+
+function migrateFriendReferences(data: {
+  groups: Group[];
+  friends: Friend[];
+  payments: PaymentRecord[];
+  parcels: Parcel[];
+  waybills: Waybill[];
+}) {
+  const aliases = new Map<string, string>(Object.entries(oneTimeFriendNameMigrations));
+  data.friends.forEach(friend => (friend.previousNames ?? []).forEach(name => aliases.set(name, friend.name)));
+  const currentNames = new Set(data.friends.map(friend => friend.name));
+  const rename = (name: string) => {
+    const target = aliases.get(name);
+    return target && currentNames.has(target) ? target : name;
+  };
+  return {
+    groups: data.groups.map(group => ({ ...group, orders: group.orders.map(order => ({ ...order, friend: rename(order.friend) })) })),
+    friends: data.friends.map(friend => {
+      const migratedFrom = Object.entries(oneTimeFriendNameMigrations)
+        .filter(([, target]) => target === friend.name)
+        .map(([source]) => source);
+      return { ...friend, previousNames: Array.from(new Set([...(friend.previousNames ?? []), ...migratedFrom])) };
+    }),
+    payments: data.payments.map(record => ({ ...record, friend: rename(record.friend) })),
+    parcels: data.parcels.map(parcel => ({ ...parcel, friend: rename(parcel.friend) })),
+    waybills: data.waybills.map(waybill => ({
+      ...waybill,
+      recipientFriend: rename(waybill.recipientFriend),
+      freightPayer: waybill.freightPayer ? rename(waybill.freightPayer) : waybill.freightPayer,
+      freightFriend: waybill.freightFriend ? rename(waybill.freightFriend) : waybill.freightFriend,
+    })),
+  };
+}
 
 export default function Home() {
   const [authChecked, setAuthChecked] = useState(false);
@@ -122,12 +156,19 @@ export default function Home() {
         const snapshot = await getDoc(doc(db, "admin", "state"));
         if (snapshot.exists()) {
           const data = snapshot.data();
-          setGroups(((data.groups as Group[]) ?? []).map(group => ({ ...group, status: normalizeGroupStatus(String(group.status)) })));
-          setFriendList((data.friends as Friend[]) ?? []);
-          setPayments((data.payments as PaymentRecord[]) ?? []);
+          const migrated = migrateFriendReferences({
+            groups: ((data.groups as Group[]) ?? []).map(group => ({ ...group, status: normalizeGroupStatus(String(group.status)) })),
+            friends: (data.friends as Friend[]) ?? [],
+            payments: (data.payments as PaymentRecord[]) ?? [],
+            parcels: (data.parcels as Parcel[]) ?? [],
+            waybills: (data.waybills as Waybill[]) ?? [],
+          });
+          setGroups(migrated.groups);
+          setFriendList(migrated.friends);
+          setPayments(migrated.payments);
           setExpenses((data.expenses as ExpenseRecord[]) ?? []);
-          setParcels((data.parcels as Parcel[]) ?? []);
-          setWaybills((data.waybills as Waybill[]) ?? []);
+          setParcels(migrated.parcels);
+          setWaybills(migrated.waybills);
           setSettings({ ...initialSettings, ...((data.settings as Partial<AppSettings>) ?? {}) });
         }
         setDataLoaded(true);
@@ -330,7 +371,37 @@ export default function Home() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const existing = friendList.find(friend => friend.id === editingFriendId);
-    const value: Friend = { id: editingFriendId ?? Date.now(), name: String(form.get("friendName") || "未命名"), note: String(form.get("note") || ""), portalNote: String(form.get("portalNote") || ""), portalStatus: existing?.portalStatus ?? "尚未設定", lastLoginAt: existing?.lastLoginAt };
+    const nextName = String(form.get("friendName") || "未命名");
+    const value: Friend = {
+      id: editingFriendId ?? Date.now(),
+      name: nextName,
+      note: String(form.get("note") || ""),
+      portalNote: String(form.get("portalNote") || ""),
+      portalStatus: existing?.portalStatus ?? "尚未設定",
+      lastLoginAt: existing?.lastLoginAt,
+      previousNames: Array.from(new Set([
+        ...(existing?.previousNames ?? []),
+        ...(existing && existing.name !== nextName ? [existing.name] : []),
+      ])),
+    };
+    const previousName = existing?.name;
+    if (previousName && previousName !== value.name) {
+      setGroups(current => current.map(group => ({
+        ...group,
+        orders: group.orders.map(order => order.friend === previousName ? { ...order, friend: value.name } : order),
+      })));
+      setPayments(current => current.map(record => record.friend === previousName ? { ...record, friend: value.name } : record));
+      setParcels(current => current.map(parcel => parcel.friend === previousName ? { ...parcel, friend: value.name } : parcel));
+      setWaybills(current => current.map(waybill => ({
+        ...waybill,
+        recipientFriend: waybill.recipientFriend === previousName ? value.name : waybill.recipientFriend,
+        freightPayer: waybill.freightPayer === previousName ? value.name : waybill.freightPayer,
+        freightFriend: waybill.freightFriend === previousName ? value.name : waybill.freightFriend,
+      })));
+      setOrderFriend(current => current === previousName ? value.name : current);
+      setPaymentFriend(current => current === previousName ? value.name : current);
+      setParcelFriend(current => current === previousName ? value.name : current);
+    }
     setFriendList(current => editingFriendId ? current.map(friend => friend.id === editingFriendId ? value : friend) : [value, ...current]);
     setFriendModalOpen(false); showNotice(`${editingFriendId ? "已更新" : "已新增"}朋友「${value.name}」`);
   }

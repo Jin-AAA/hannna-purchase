@@ -110,7 +110,13 @@ function App() {
     try {
       if (selected.status === "尚未設定") await request(`/friends/${selected.id}/setup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) });
       await signInWithEmailAndPassword(auth, friendEmail(selected.id), password);
-    } catch { setError(selected.status === "尚未設定" ? "設定失敗，請重新確認後再試一次" : "密碼不正確，請再試一次"); }
+    } catch (reason) {
+      setError(reason instanceof Error
+        ? reason.message
+        : selected.status === "尚未設定"
+          ? "設定失敗，請稍後再試一次"
+          : "密碼不正確，請再試一次");
+    }
     finally { setBusy(false); }
   }
 
