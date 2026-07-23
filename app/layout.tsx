@@ -19,8 +19,8 @@ export const metadata: Metadata = {
     "codex-preview": "development",
   },
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: process.env.GITHUB_PAGES === "true" ? "/hannna-purchase/favicon.svg?v=2" : "/favicon.svg?v=2",
+    shortcut: process.env.GITHUB_PAGES === "true" ? "/hannna-purchase/favicon.svg?v=2" : "/favicon.svg?v=2",
   },
 };
 
