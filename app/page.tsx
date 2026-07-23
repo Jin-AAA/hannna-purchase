@@ -56,6 +56,11 @@ const statusClass: Record<GroupStatus, string> = { 待下單: "gray", 待到貨:
 const normalizeGroupStatus = (value: string): GroupStatus => value === "收單中" ? "待下單" : value === "整理出貨" ? "已到貨" : groupStatuses.includes(value as GroupStatus) ? value as GroupStatus : "待下單";
 const formatDate = (value: string) => value ? value.replaceAll("-", "/") : "未設定";
 const dateInputValue = (value?: string) => value && value !== "未設定" ? value.replaceAll("/", "-") : "";
+const todayInputValue = () => {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+};
 const orderQuantity = (order: Order) => order.lines.reduce((sum, line) => sum + line.quantity, 0);
 const orderTotal = (group: Group, order: Order) => order.lines.reduce((sum, line) => sum + (group.products.find(p => p.id === line.productId)?.unitPrice ?? 0) * line.quantity, 0);
 const orderReceivable = (order: Order) => order.lines.reduce((sum, line) => sum + line.receivableTwd, 0);
@@ -519,16 +524,25 @@ export default function Home() {
   }
   async function saveWaybill(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = new FormData(event.currentTarget);
+    const existing = editingWaybillId !== null ? waybills.find(item => item.id === editingWaybillId) : null;
     const items = Object.entries(waybillItems).filter(([,value]) => value.checked).map(([key,value]) => { const [groupId,orderId] = key.split("-").map(Number); return { groupId, orderId, weightG: value.weightG, receivableFreightTwd: value.receivableFreightTwd || 0 }; });
     if (!items.length) return showNotice("請至少選擇一份要運回的訂單");
-    if (!String(form.get("appliedDate") || "")) return showNotice("請填寫申請運回日期");
-    if (String(form.get("totalWeightG") || "") === "") return showNotice("請填寫運單總重量");
-    if (String(form.get("freightTwd") || "") === "") return showNotice("請填寫本次國際運費");
+    const rawAppliedDate = String(form.get("appliedDate") || "");
+    const rawTotalWeightG = String(form.get("totalWeightG") || "");
+    const rawFreightTwd = String(form.get("freightTwd") || "");
+    if (!existing && !rawAppliedDate) return showNotice("請填寫申請運回日期");
+    if (!existing && rawTotalWeightG === "") return showNotice("請填寫運單總重量");
+    if (!existing && rawFreightTwd === "") return showNotice("請填寫本次國際運費");
     const status = String(form.get("status")) as Waybill["status"];
-    if (status === "已到貨" && !String(form.get("arrivedDate") || "")) return showNotice("運單狀態為已到貨時，請填寫到貨日期");
+    const rawArrivedDate = String(form.get("arrivedDate") || "");
     const destination = waybillDestination;
-    const existing = editingWaybillId ? waybills.find(item => item.id === editingWaybillId) : null;
-    const value: Waybill = { id: existing?.id ?? Date.now(), code: existing?.code ?? `INTL-${String(waybills.length + 1).padStart(3,"0")}`, country: String(form.get("country")) as Waybill["country"], tracking: String(form.get("tracking")||""), items, totalWeightG: Number(form.get("totalWeightG")||0), freightTwd: Number(form.get("freightTwd")||0), destination, recipientFriend: destination === "直寄朋友" ? String(form.get("recipientFriend")||"") : "", status, appliedDate: formatDate(String(form.get("appliedDate")||"")), arrivedDate: status === "已到貨" ? formatDate(String(form.get("arrivedDate")||"")) : "", note: String(form.get("note")||"") };
+    const appliedDate = rawAppliedDate
+      ? formatDate(rawAppliedDate)
+      : existing?.appliedDate || "未設定";
+    const arrivedDate = status === "已到貨"
+      ? formatDate(rawArrivedDate || dateInputValue(existing?.arrivedDate) || todayInputValue())
+      : "";
+    const value: Waybill = { id: existing?.id ?? Date.now(), code: existing?.code ?? `INTL-${String(waybills.length + 1).padStart(3,"0")}`, country: String(form.get("country")) as Waybill["country"], tracking: String(form.get("tracking")||""), items, totalWeightG: rawTotalWeightG === "" ? existing?.totalWeightG ?? 0 : Number(rawTotalWeightG), freightTwd: rawFreightTwd === "" ? existing?.freightTwd ?? 0 : Number(rawFreightTwd), destination, recipientFriend: destination === "直寄朋友" ? String(form.get("recipientFriend")||"") : "", status, appliedDate, arrivedDate, note: String(form.get("note")||"") };
     const effectiveWaybills = [...waybills.filter(item => item.id !== existing?.id), value];
     const nextWaybills = existing ? waybills.map(item => item.id === existing.id ? value : item) : [value,...waybills];
     const nextGroups = groups.map(group => { const orders=group.orders.map(order => { const refs=effectiveWaybills.filter(waybill=>waybill.items.some(item=>item.groupId===group.id&&item.orderId===order.id)); const arrived=refs.find(waybill=>waybill.status==="已到貨"); const moving=refs.find(waybill=>waybill.status==="已申請運回"); const active=arrived??moving; const lines=order.lines.map(line => active ? {...line, arrival: arrived ? "已到貨" as const : "運回中" as const, deliveryRoute: active.destination} : withoutUndefined({...line,arrival:undefined,deliveryRoute:undefined})); return withoutUndefined({...order, lines, arrival: arrived ? "已到貨" as const : "未到貨" as const}); }); const lines=orders.flatMap(order=>order.lines); const arrivedCount=lines.filter(line=>line.arrival==="已到貨").length; const movingCount=lines.filter(line=>line.arrival==="運回中").length; const groupStatus:GroupStatus=arrivedCount===lines.length&&lines.length?"已到貨":arrivedCount>0?"部分到貨":movingCount>0?"待到貨":group.status; return {...group,orders,status:groupStatus}; });

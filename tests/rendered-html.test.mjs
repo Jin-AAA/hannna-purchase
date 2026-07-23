@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const developmentPreviewMeta =
@@ -30,4 +31,13 @@ test("renders development preview metadata", async () => {
     /^text\/html\b/i,
   );
   assert.match(await response.text(), developmentPreviewMeta);
+});
+
+test("editing a legacy waybill is not blocked by newly required fields", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /if \(!existing && !rawAppliedDate\)/);
+  assert.match(source, /if \(!existing && rawTotalWeightG === ""\)/);
+  assert.match(source, /if \(!existing && rawFreightTwd === ""\)/);
+  assert.match(source, /rawArrivedDate \|\| dateInputValue\(existing\?\.arrivedDate\) \|\| todayInputValue\(\)/);
 });
