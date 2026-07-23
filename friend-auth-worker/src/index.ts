@@ -37,6 +37,13 @@ function validPassword(value: unknown): value is string {
 function friendUid(friendId: string) { return `friend-${friendId}`; }
 function friendEmail(friendId: string) { return `${friendUid(friendId)}@hannna-purchase.local`; }
 
+async function firebasePassword(friendId: string, password: string) {
+  if (password.length >= 6) return password;
+  const bytes = new TextEncoder().encode(`hannna-short-password-v1:${friendId}:${password}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
 async function verifyFirebaseToken(token: string, env: Env): Promise<FirebaseClaims> {
   const header = JSON.parse(atob(token.split(".")[0].replace(/-/g, "+").replace(/_/g, "/"))) as { kid?: string };
   if (!header.kid) throw new Error("Missing key id");
@@ -180,7 +187,7 @@ async function route(request: Request, env: Env) {
     const body = await request.json<{ password?: unknown }>();
     if (!validPassword(body.password)) return json({ error: "密碼需為 4～72 個字元" }, 400);
     if (!(await accountExists(env, friendUid(friendId)))) {
-      await createAccount(env, friendId, body.password);
+      await createAccount(env, friendId, await firebasePassword(friendId, body.password));
     }
     await updatePortalStatus(env, friendId, "已設定");
     return json({ ok: true, email: friendEmail(friendId) });
@@ -190,7 +197,7 @@ async function route(request: Request, env: Env) {
     await requireFriend(request, env, friendId);
     const body = await request.json<{ password?: unknown }>();
     if (!validPassword(body.password)) return json({ error: "密碼需為 4～72 個字元" }, 400);
-    await setAccount(env, friendId, { password: body.password }, false);
+    await setAccount(env, friendId, { password: await firebasePassword(friendId, body.password) }, false);
     return json({ ok: true });
   }
   if (request.method === "POST" && lastLoginMatch && validFriendId(lastLoginMatch[1])) {
@@ -205,7 +212,7 @@ async function route(request: Request, env: Env) {
     if (action === "password") {
       const body = await request.json<{ password?: unknown }>();
       if (!validPassword(body.password)) return json({ error: "密碼需為 4～72 個字元" }, 400);
-      await setAccount(env, friendId, { password: body.password, disabled: false }, true);
+      await setAccount(env, friendId, { password: await firebasePassword(friendId, body.password), disabled: false }, true);
       await updatePortalStatus(env, friendId, "已設定");
     } else {
       await setAccount(env, friendId, { disabled: action === "suspend" }, false);

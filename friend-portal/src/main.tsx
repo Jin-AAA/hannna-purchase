@@ -22,6 +22,13 @@ const api = (import.meta.env.VITE_FRIEND_AUTH_API as string | undefined)?.replac
 const money = (value: number) => `NT$ ${Math.max(0, Math.round(value)).toLocaleString("zh-TW")}`;
 const friendEmail = (id: string) => `friend-${id}@hannna-purchase.local`;
 
+async function firebasePassword(friendId: string | number, password: string) {
+  if (password.length >= 6) return password;
+  const bytes = new TextEncoder().encode(`hannna-short-password-v1:${friendId}:${password}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
 async function request(path: string, init?: RequestInit) {
   if (!api) throw new Error("朋友端驗證服務尚未設定");
   const response = await fetch(`${api}${path}`, init);
@@ -109,7 +116,7 @@ function App() {
     setBusy(true); setError("");
     try {
       if (selected.status === "尚未設定") await request(`/friends/${selected.id}/setup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) });
-      await signInWithEmailAndPassword(auth, friendEmail(selected.id), password);
+      await signInWithEmailAndPassword(auth, friendEmail(selected.id), await firebasePassword(selected.id, password));
     } catch (reason) {
       setError(reason instanceof Error
         ? reason.message
