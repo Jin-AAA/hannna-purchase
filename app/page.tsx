@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, Bell, Box, CalendarDays, ChevronDown, ChevronRight, Globe2,
   CircleDollarSign, ClipboardList, Gift, LayoutDashboard, Menu,
@@ -32,6 +32,8 @@ type Parcel = { id: number; code: string; friend: string; orderIds: number[]; me
 type WaybillItem = { groupId: number; orderId: number; weightG: number; receivableFreightTwd?: number };
 type Waybill = { id: number; code: string; country: "韓國" | "日本" | "其他"; tracking: string; items: WaybillItem[]; totalWeightG: number; freightTwd: number; destination: "寄到我這裡" | "直寄朋友"; recipientFriend: string; status: "已申請運回" | "已到貨"; appliedDate: string; arrivedDate: string; note: string; freightPayer?: string; freightFriend?: string; freightReceivableTwd?: number };
 type AppSettings = { siteName: string; adminName: string; orderPrefix: string; amountDisplay: "original" | "twd"; thousands: boolean; paymentMethods: string[]; deliveryMethods: DeliveryMethod[]; defaultShippingNote: string };
+type AdminState = { groups: Group[]; friends: Friend[]; payments: PaymentRecord[]; expenses: ExpenseRecord[]; parcels: Parcel[]; waybills: Waybill[]; settings: AppSettings };
+type LocalAdminState = AdminState & { savedAt: number };
 
 const currencyInfo: Record<Currency, { label: string; symbol: string }> = {
   KRW: { label: "韓幣 KRW", symbol: "₩" },
@@ -70,6 +72,21 @@ const earnedGifts = (group: Group, total: number) => group.giftRules.flatMap(rul
   return count > 0 ? [{ ...rule, count }] : [];
 });
 const withoutUndefined = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const localStateKey = "hannna-purchase-admin-state-v1";
+const firestoreMillis = (value: unknown) => {
+  if (value && typeof value === "object" && "toMillis" in value && typeof (value as { toMillis?: unknown }).toMillis === "function") {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+  return 0;
+};
+const readLocalState = (): LocalAdminState | null => {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(localStateKey) ?? "null") as Partial<LocalAdminState> | null;
+    return parsed && typeof parsed.savedAt === "number" && Array.isArray(parsed.groups) ? parsed as LocalAdminState : null;
+  } catch {
+    return null;
+  }
+};
 const friendAuthApi = process.env.NEXT_PUBLIC_FRIEND_AUTH_API?.replace(/\/$/, "") ?? "";
 const oneTimeFriendNameMigrations: Record<string, string> = { "我自己": "哈娜本人" };
 
@@ -154,6 +171,10 @@ export default function Home() {
   const [waybillItems, setWaybillItems] = useState<Record<string, { checked: boolean; weightG: number; receivableFreightTwd: number }>>({});
   const [waybillDestination, setWaybillDestination] = useState<Waybill["destination"]>("寄到我這裡");
   const [settings, setSettings] = useState<AppSettings>(initialSettings);
+  const [cloudSaveState, setCloudSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [cloudSaveError, setCloudSaveError] = useState("");
+  const cloudSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const latestSaveNumber = useRef(0);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async user => {
@@ -162,23 +183,24 @@ export default function Home() {
       if (!user) { setDataLoaded(false); return; }
       try {
         const snapshot = await getDoc(doc(db, "admin", "state"));
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          const migrated = migrateFriendReferences({
-            groups: ((data.groups as Group[]) ?? []).map(group => ({ ...group, status: normalizeGroupStatus(String(group.status)) })),
-            friends: (data.friends as Friend[]) ?? [],
-            payments: (data.payments as PaymentRecord[]) ?? [],
-            parcels: (data.parcels as Parcel[]) ?? [],
-            waybills: (data.waybills as Waybill[]) ?? [],
-          });
-          setGroups(migrated.groups);
-          setFriendList(migrated.friends);
-          setPayments(migrated.payments);
-          setExpenses((data.expenses as ExpenseRecord[]) ?? []);
-          setParcels(migrated.parcels);
-          setWaybills(migrated.waybills);
-          setSettings({ ...initialSettings, ...((data.settings as Partial<AppSettings>) ?? {}) });
-        }
+        const remote = snapshot.exists() ? snapshot.data() : {};
+        const local = readLocalState();
+        const useLocal = Boolean(local && local.savedAt > firestoreMillis(remote.updatedAt));
+        const data = useLocal ? local! : remote;
+        const migrated = migrateFriendReferences({
+          groups: ((data.groups as Group[]) ?? []).map(group => ({ ...group, status: normalizeGroupStatus(String(group.status)) })),
+          friends: (data.friends as Friend[]) ?? [],
+          payments: (data.payments as PaymentRecord[]) ?? [],
+          parcels: (data.parcels as Parcel[]) ?? [],
+          waybills: (data.waybills as Waybill[]) ?? [],
+        });
+        setGroups(migrated.groups);
+        setFriendList(migrated.friends);
+        setPayments(migrated.payments);
+        setExpenses((data.expenses as ExpenseRecord[]) ?? []);
+        setParcels(migrated.parcels);
+        setWaybills(migrated.waybills);
+        setSettings({ ...initialSettings, ...((data.settings as Partial<AppSettings>) ?? {}) });
         setDataLoaded(true);
       } catch {
         setLoginError("無法讀取雲端資料，請確認網路後重新整理");
@@ -245,12 +267,31 @@ export default function Home() {
 
   useEffect(() => {
     if (!isAuthenticated || !dataLoaded) return;
+    const state = withoutUndefined({ groups, friends: friendList, payments, expenses, parcels, waybills, settings });
+    const savedAt = Date.now();
+    window.localStorage.setItem(localStateKey, JSON.stringify({ ...state, savedAt }));
+    const saveNumber = ++latestSaveNumber.current;
+    setCloudSaveState("saving");
+    setCloudSaveError("");
     const timer = window.setTimeout(() => {
-      void setDoc(doc(db, "admin", "state"), {
-        ...withoutUndefined({ groups, friends: friendList, payments, expenses, parcels, waybills, settings }),
-        updatedAt: serverTimestamp(),
-      }).catch(() => showNotice("雲端儲存失敗，請確認網路連線"));
-    }, 350);
+      cloudSaveQueue.current = cloudSaveQueue.current.catch(() => undefined).then(async () => {
+        try {
+          await setDoc(doc(db, "admin", "state"), { ...state, updatedAt: serverTimestamp() }, { merge: true });
+          if (saveNumber === latestSaveNumber.current) {
+            setCloudSaveState("saved");
+            setCloudSaveError("");
+          }
+        } catch (error) {
+          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "unknown";
+          if (saveNumber === latestSaveNumber.current) {
+            setCloudSaveState("error");
+            setCloudSaveError(code);
+            showNotice(`雲端儲存失敗（${code}），資料已暫存在這台裝置`);
+          }
+          throw error;
+        }
+      });
+    }, 120);
     return () => window.clearTimeout(timer);
   }, [groups, friendList, payments, expenses, parcels, waybills, settings, isAuthenticated, dataLoaded]);
 
@@ -564,7 +605,7 @@ export default function Home() {
     <section className="workspace">
       <header>
         <div className="header-greeting"><button className="menu-button" onClick={() => setMobileNav(true)} aria-label="開啟選單"><Menu /></button><div><h1>2026 年 7 月 22 日・星期三</h1></div></div>
-        <div className="header-actions"><button className="logout-button" onClick={logout}><LogOut size={18} />登出</button>{activeNav === "朋友名單" ? <button className="primary-button" onClick={() => openFriendModal()}><Plus size={20} />新增朋友</button> : activeNav === "款項紀錄" ? <button className="primary-button" onClick={() => openPaymentModal()}><Plus size={20} />新增收款</button> : activeNav === "國際運單" ? <button className="primary-button" onClick={openWaybillModal}><Plus size={20} />建立運單</button> : activeNav === "出貨管理" ? <button className="primary-button" onClick={() => openParcelModal()}><Plus size={20} />建立包裹</button> : activeNav === "代購團" && <button className="primary-button" onClick={selectedGroup ? () => openOrderModal() : openGroupModal}><Plus size={20} />{selectedGroup ? "新增個別訂單" : "新增代購團"}</button>}</div>
+        <div className="header-actions"><span className={`cloud-save-status ${cloudSaveState}`}>{cloudSaveState === "saving" ? "儲存中…" : cloudSaveState === "error" ? `僅存於本機${cloudSaveError ? `・${cloudSaveError}` : ""}` : cloudSaveState === "saved" ? "已儲存至雲端" : ""}</span><button className="logout-button" onClick={logout}><LogOut size={18} />登出</button>{activeNav === "朋友名單" ? <button className="primary-button" onClick={() => openFriendModal()}><Plus size={20} />新增朋友</button> : activeNav === "款項紀錄" ? <button className="primary-button" onClick={() => openPaymentModal()}><Plus size={20} />新增收款</button> : activeNav === "國際運單" ? <button className="primary-button" onClick={openWaybillModal}><Plus size={20} />建立運單</button> : activeNav === "出貨管理" ? <button className="primary-button" onClick={() => openParcelModal()}><Plus size={20} />建立包裹</button> : activeNav === "代購團" && <button className="primary-button" onClick={selectedGroup ? () => openOrderModal() : openGroupModal}><Plus size={20} />{selectedGroup ? "新增個別訂單" : "新增代購團"}</button>}</div>
       </header>
       <div className="content">
         {activeNav === "總覽" ? <DashboardPage groups={groups} orders={allOrders} payments={payments} parcels={parcels} onNavigate={changeNav} onOpenGroup={group => { setSelectedGroupId(group.id); setActiveNav("代購團"); }} /> : activeNav === "朋友名單" ? <FriendsPage friends={friendList} groups={groups} query={query} setQuery={setQuery} onAdd={() => openFriendModal()} onEdit={openFriendModal} /> : activeNav === "款項紀錄" ? <PaymentsPage friends={friendList} groups={groups} waybills={waybills} payments={payments} expenses={expenses} tab={paymentTab} setTab={setPaymentTab} onIncome={openPaymentModal} onExpense={() => setPaymentModal("expense")} /> : activeNav === "國際運單" ? <WaybillsPage waybills={waybills} groups={groups} onCreate={openWaybillModal} /> : activeNav === "出貨管理" ? <ShippingPage orders={allOrders.map(item=>({...item,order:{...item.order,lines:item.order.lines.filter(line=>line.deliveryRoute!=="直寄朋友")}})).filter(item=>item.order.lines.length>0)} parcels={parcels} tab={shippingTab} setTab={setShippingTab} onCreate={openParcelModal} onEdit={parcelId => openParcelModal("", parcelId)} /> : activeNav === "訂單明細" && !selectedGroup ? <OrdersPage orders={visibleOrders} groups={groups} query={query} setQuery={setQuery} filters={{orderFriend,orderGroup,paymentFilter,arrivalFilter,shippingFilter}} setters={{setOrderFriend,setOrderGroup,setPaymentFilter,setArrivalFilter,setShippingFilter}} onOpen={openOrderFromList} /> : selectedGroup ? <GroupDetail group={selectedGroup} onBack={() => { setSelectedGroupId(null); }} onAddOrder={() => openOrderModal()} onEditGroup={openEditGroupModal} onEditOrder={openOrderModal} onStatusChange={updateGroupStatus} /> : <>

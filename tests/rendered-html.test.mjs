@@ -60,3 +60,19 @@ test("waybill order weight keeps numeric zero instead of rendering it as blank",
   assert.match(source, /value=\{value\.weightG\}/);
   assert.doesNotMatch(source, /value=\{value\.weightG\|\|""\}/);
 });
+
+test("all admin changes are backed up locally before cloud persistence", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /localStorage\.setItem\(localStateKey/);
+  assert.match(source, /JSON\.stringify\(\{ \.\.\.state, savedAt \}\)/);
+  assert.match(source, /local\.savedAt > firestoreMillis\(remote\.updatedAt\)/);
+});
+
+test("cloud writes are serialized and expose their real result", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /cloudSaveQueue\.current = cloudSaveQueue\.current/);
+  assert.match(source, /setCloudSaveState\("saved"\)/);
+  assert.match(source, /setCloudSaveState\("error"\)/);
+  assert.match(source, /已儲存至雲端/);
+  assert.match(source, /僅存於本機/);
+});

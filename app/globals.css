@@ -319,3 +319,7 @@ header { height:96px; display:flex; align-items:center; justify-content:space-be
 .waybill-empty { display:grid; justify-items:center; gap:7px; padding:34px 18px; color:#8b98aa; text-align:center; }
 .waybill-empty svg { color:#6f8db8; }.waybill-empty strong { color:#425979; font-size:12px; }.waybill-empty span { font-size:9px; }
 @media (max-width:760px) { .waybill-line { grid-template-columns:18px 1fr; } }
+.cloud-save-status{font-size:12px;font-weight:700;color:#718096;white-space:nowrap}
+.cloud-save-status.saving{color:#8a6b20}
+.cloud-save-status.saved{color:#287a64}
+.cloud-save-status.error{color:#b74343}
