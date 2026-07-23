@@ -8,7 +8,7 @@ import {
   UserRound, UsersRound, X, Pencil, Download, Database, Save, AlertTriangle, LogOut, LockKeyhole,
 } from "lucide-react";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, updatePassword } from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
 type GroupStatus = "待下單" | "待到貨" | "部分到貨" | "已到貨" | "出貨中" | "部分出貨" | "已出貨" | "已完成";
@@ -180,6 +180,32 @@ export default function Home() {
 
   useEffect(() => {
     if (!isAuthenticated || !dataLoaded) return;
+    return onSnapshot(collection(db, "friendViews"), snapshot => {
+      const portalState = new Map(snapshot.docs.map(item => {
+        const data = item.data();
+        const rawLastLogin = data.lastLoginAt as { toDate?: () => Date } | string | undefined;
+        const lastLoginAt = typeof rawLastLogin === "string"
+          ? rawLastLogin
+          : rawLastLogin?.toDate?.().toISOString();
+        return [Number(item.id), {
+          portalStatus: data.portalStatus as FriendPortalStatus | undefined,
+          lastLoginAt,
+        }] as const;
+      }));
+      setFriendList(current => current.map(friend => {
+        const remote = portalState.get(friend.id);
+        if (!remote) return friend;
+        const portalStatus = remote.portalStatus ?? friend.portalStatus ?? "尚未設定";
+        const lastLoginAt = remote.lastLoginAt ?? friend.lastLoginAt;
+        return portalStatus === friend.portalStatus && lastLoginAt === friend.lastLoginAt
+          ? friend
+          : { ...friend, portalStatus, lastLoginAt };
+      }));
+    }, () => showNotice("朋友登入狀態同步失敗，請稍後重新整理"));
+  }, [isAuthenticated, dataLoaded]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !dataLoaded) return;
     const timer = window.setTimeout(() => {
       void setDoc(doc(db, "admin", "state"), {
         ...withoutUndefined({ groups, friends: friendList, payments, expenses, parcels, waybills, settings }),
@@ -207,7 +233,7 @@ export default function Home() {
           return orderIdsForFriend.length ? [{ id: parcel.id, code: parcel.code, orderIds: orderIdsForFriend, method: parcel.method, shippingFee: parcel.shippingFee, tracking: parcel.tracking, date: parcel.date, status: parcel.status }] : [];
         });
         const publicPayments = payments.filter(record => record.friend === friend.name).map(({ id, amount, date, method, orderIds: paidOrderIds }) => ({ id, amount, date, method, orderIds: paidOrderIds }));
-        void setDoc(doc(db, "friendViews", String(friend.id)), withoutUndefined({ friendId: friend.id, authUid: `friend-${friend.id}`, name: friend.name, portalStatus: friend.portalStatus ?? "尚未設定", portalNote: friend.portalNote ?? "", groups: friendOrders, payments: publicPayments, waybills: publicWaybills, parcels: publicParcels, updatedAt: new Date().toISOString() }))
+        void setDoc(doc(db, "friendViews", String(friend.id)), withoutUndefined({ friendId: friend.id, authUid: `friend-${friend.id}`, name: friend.name, portalNote: friend.portalNote ?? "", groups: friendOrders, payments: publicPayments, waybills: publicWaybills, parcels: publicParcels, updatedAt: new Date().toISOString() }), { merge: true })
           .catch(() => showNotice("朋友端資料同步失敗，請稍後再試"));
       });
     }, 700);

@@ -179,7 +179,9 @@ async function route(request: Request, env: Env) {
     if (await getStatus(env, friendId) !== "尚未設定") return json({ error: "帳號已經設定完成" }, 409);
     const body = await request.json<{ password?: unknown }>();
     if (!validPassword(body.password)) return json({ error: "密碼需為 4～72 個字元" }, 400);
-    await createAccount(env, friendId, body.password);
+    if (!(await accountExists(env, friendUid(friendId)))) {
+      await createAccount(env, friendId, body.password);
+    }
     await updatePortalStatus(env, friendId, "已設定");
     return json({ ok: true, email: friendEmail(friendId) });
   }
