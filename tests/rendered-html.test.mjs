@@ -92,3 +92,18 @@ test("cloud writes are serialized and expose their real result", async () => {
   assert.match(source, /已儲存至雲端/);
   assert.match(source, /僅存於本機/);
 });
+
+test("unchanged friend account polling does not trigger another cloud write", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const stableArrayGuards = source.match(/next\.every\(\(friend, index\) => friend === current\[index\]\) \? current : next/g) ?? [];
+
+  assert.equal(stableArrayGuards.length, 2);
+  assert.match(source, /if \(stateJson === lastQueuedStateJson\.current\)/);
+});
+
+test("loading the existing cloud state does not immediately write it back", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /if \(!useLocal\) \{/);
+  assert.match(source, /lastQueuedStateJson\.current = JSON\.stringify/);
+});

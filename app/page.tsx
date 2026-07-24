@@ -189,6 +189,7 @@ export default function Home() {
   const [cloudSaveError, setCloudSaveError] = useState("");
   const cloudSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const latestSaveNumber = useRef(0);
+  const lastQueuedStateJson = useRef("");
 
   useEffect(() => {
     return onAuthStateChanged(auth, async user => {
@@ -208,13 +209,26 @@ export default function Home() {
           parcels: (data.parcels as Parcel[]) ?? [],
           waybills: (data.waybills as Waybill[]) ?? [],
         });
+        const loadedSettings = { ...initialSettings, ...((data.settings as Partial<AppSettings>) ?? {}) };
+        const loadedExpenses = (data.expenses as ExpenseRecord[]) ?? [];
+        if (!useLocal) {
+          lastQueuedStateJson.current = JSON.stringify(withoutUndefined({
+            groups: migrated.groups,
+            friends: migrated.friends,
+            payments: migrated.payments,
+            expenses: loadedExpenses,
+            parcels: migrated.parcels,
+            waybills: migrated.waybills,
+            settings: loadedSettings,
+          }));
+        }
         setGroups(migrated.groups);
         setFriendList(migrated.friends);
         setPayments(migrated.payments);
-        setExpenses((data.expenses as ExpenseRecord[]) ?? []);
+        setExpenses(loadedExpenses);
         setParcels(migrated.parcels);
         setWaybills(migrated.waybills);
-        setSettings({ ...initialSettings, ...((data.settings as Partial<AppSettings>) ?? {}) });
+        setSettings(loadedSettings);
         setDataLoaded(true);
       } catch {
         setLoginError("無法讀取雲端資料，請確認網路後重新整理");
@@ -236,15 +250,18 @@ export default function Home() {
           lastLoginAt,
         }] as const;
       }));
-      setFriendList(current => current.map(friend => {
-        const remote = portalState.get(friend.id);
-        if (!remote) return friend;
-        const portalStatus = remote.portalStatus ?? friend.portalStatus ?? "尚未設定";
-        const lastLoginAt = remote.lastLoginAt ?? friend.lastLoginAt;
-        return portalStatus === friend.portalStatus && lastLoginAt === friend.lastLoginAt
-          ? friend
-          : { ...friend, portalStatus, lastLoginAt };
-      }));
+      setFriendList(current => {
+        const next = current.map(friend => {
+          const remote = portalState.get(friend.id);
+          if (!remote) return friend;
+          const portalStatus = remote.portalStatus ?? friend.portalStatus ?? "尚未設定";
+          const lastLoginAt = remote.lastLoginAt ?? friend.lastLoginAt;
+          return portalStatus === friend.portalStatus && lastLoginAt === friend.lastLoginAt
+            ? friend
+            : { ...friend, portalStatus, lastLoginAt };
+        });
+        return next.every((friend, index) => friend === current[index]) ? current : next;
+      });
     }, () => showNotice("朋友登入狀態同步失敗，請稍後重新整理"));
   }, [isAuthenticated, dataLoaded]);
 
@@ -263,13 +280,16 @@ export default function Home() {
         const result = await response.json() as { friends?: Array<{ id: string; portalStatus: FriendPortalStatus; lastLoginAt?: string }> };
         if (cancelled) return;
         const remote = new Map((result.friends ?? []).map(friend => [Number(friend.id), friend]));
-        setFriendList(current => current.map(friend => {
-          const state = remote.get(friend.id);
-          if (!state) return friend;
-          return friend.portalStatus === state.portalStatus && friend.lastLoginAt === state.lastLoginAt
-            ? friend
-            : { ...friend, portalStatus: state.portalStatus, lastLoginAt: state.lastLoginAt };
-        }));
+        setFriendList(current => {
+          const next = current.map(friend => {
+            const state = remote.get(friend.id);
+            if (!state) return friend;
+            return friend.portalStatus === state.portalStatus && friend.lastLoginAt === state.lastLoginAt
+              ? friend
+              : { ...friend, portalStatus: state.portalStatus, lastLoginAt: state.lastLoginAt };
+          });
+          return next.every((friend, index) => friend === current[index]) ? current : next;
+        });
       } catch {
         // Firestore snapshot remains available as a fallback; retry on the next interval.
       }
@@ -282,8 +302,15 @@ export default function Home() {
   useEffect(() => {
     if (!isAuthenticated || !dataLoaded) return;
     const state = withoutUndefined({ groups, friends: friendList, payments, expenses, parcels, waybills, settings });
+    const stateJson = JSON.stringify(state);
     const savedAt = Date.now();
     window.localStorage.setItem(localStateKey, JSON.stringify({ ...state, savedAt }));
+    if (stateJson === lastQueuedStateJson.current) {
+      setCloudSaveState("saved");
+      setCloudSaveError("");
+      return;
+    }
+    lastQueuedStateJson.current = stateJson;
     const saveNumber = ++latestSaveNumber.current;
     setCloudSaveState("saving");
     setCloudSaveError("");
