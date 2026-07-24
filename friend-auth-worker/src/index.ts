@@ -12,6 +12,15 @@ interface Env {
 
 type PortalStatus = "尚未設定" | "已設定" | "已停用";
 type FirebaseClaims = JWTPayload & { user_id?: string; sub: string };
+type FirestoreValue =
+  | { nullValue: null }
+  | { booleanValue: boolean }
+  | { integerValue: string }
+  | { doubleValue: number }
+  | { stringValue: string }
+  | { timestampValue: string }
+  | { arrayValue: { values?: FirestoreValue[] } }
+  | { mapValue: { fields?: Record<string, FirestoreValue> } };
 
 const json = (body: unknown, status = 200, headers: HeadersInit = {}) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", ...headers } });
@@ -87,6 +96,113 @@ async function accessToken(env: Env) {
   });
   if (!response.ok) throw new Error("Unable to authorize account service");
   return (await response.json<{ access_token: string }>()).access_token;
+}
+
+function firestoreValue(value: unknown): FirestoreValue {
+  if (value === null) return { nullValue: null };
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw Object.assign(new Error("資料包含無效數字"), { status: 400, code: "INVALID_NUMBER" });
+    return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  }
+  if (typeof value === "string") return { stringValue: value };
+  if (Array.isArray(value)) return { arrayValue: value.length ? { values: value.map(firestoreValue) } : {} };
+  if (typeof value === "object") {
+    const fields = Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .map(([key, item]) => [key, firestoreValue(item)]));
+    return { mapValue: Object.keys(fields).length ? { fields } : {} };
+  }
+  throw Object.assign(new Error("資料包含無法儲存的格式"), { status: 400, code: "INVALID_DATA" });
+}
+
+function documentFields(value: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(value)
+    .filter(([, item]) => item !== undefined)
+    .map(([key, item]) => [key, firestoreValue(item)]));
+}
+
+type SyncFriend = { id?: unknown; name?: unknown; portalNote?: unknown };
+type SyncOrder = { id?: unknown; friend?: unknown };
+type SyncGroup = { id?: unknown; name?: unknown; saleDate?: unknown; currency?: unknown; status?: unknown; products?: unknown; orders?: SyncOrder[] };
+type SyncWaybill = { items?: Array<{ orderId?: unknown }>; [key: string]: unknown };
+type SyncParcel = { orderIds?: unknown[]; [key: string]: unknown };
+type SyncPayment = { friend?: unknown; [key: string]: unknown };
+
+function friendViewsFromState(state: Record<string, unknown>) {
+  const friends = Array.isArray(state.friends) ? state.friends as SyncFriend[] : [];
+  const groups = Array.isArray(state.groups) ? state.groups as SyncGroup[] : [];
+  const payments = Array.isArray(state.payments) ? state.payments as SyncPayment[] : [];
+  const waybills = Array.isArray(state.waybills) ? state.waybills as SyncWaybill[] : [];
+  const parcels = Array.isArray(state.parcels) ? state.parcels as SyncParcel[] : [];
+  return friends.flatMap(friend => {
+    if (typeof friend.id !== "number" || typeof friend.name !== "string") return [];
+    const friendGroups = groups.flatMap(group => {
+      const orders = Array.isArray(group.orders) ? group.orders.filter(order => order.friend === friend.name) : [];
+      return orders.length ? [{ id: group.id, name: group.name, saleDate: group.saleDate, currency: group.currency, status: group.status, products: group.products, orders }] : [];
+    });
+    const orderIds = new Set(friendGroups.flatMap(group => group.orders.flatMap(order => typeof order.id === "number" ? [order.id] : [])));
+    const publicWaybills = waybills.flatMap(waybill => {
+      const items = Array.isArray(waybill.items) ? waybill.items.filter(item => typeof item.orderId === "number" && orderIds.has(item.orderId)) : [];
+      if (!items.length) return [];
+      const { items: _items, ...details } = waybill;
+      return [{ ...details, items }];
+    });
+    const publicParcels = parcels.flatMap(parcel => {
+      const ids = Array.isArray(parcel.orderIds) ? parcel.orderIds.filter(id => typeof id === "number" && orderIds.has(id)) : [];
+      if (!ids.length) return [];
+      const { orderIds: _orderIds, ...details } = parcel;
+      return [{ ...details, orderIds: ids }];
+    });
+    return [{
+      id: String(friend.id),
+      data: {
+        friendId: friend.id,
+        authUid: friendUid(String(friend.id)),
+        name: friend.name,
+        portalNote: typeof friend.portalNote === "string" ? friend.portalNote : "",
+        groups: friendGroups,
+        payments: payments.filter(record => record.friend === friend.name),
+        waybills: publicWaybills,
+        parcels: publicParcels,
+        updatedAt: new Date().toISOString(),
+      },
+    }];
+  });
+}
+
+async function syncAdminState(env: Env, state: Record<string, unknown>) {
+  const token = await accessToken(env);
+  const root = `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents`;
+  const writes = [
+    {
+      update: {
+        name: `${root}/admin/state`,
+        fields: documentFields({ ...state, updatedAt: Date.now() }),
+      },
+    },
+    ...friendViewsFromState(state).map(friend => ({
+      update: {
+        name: `${root}/friendViews/${friend.id}`,
+        fields: documentFields(friend.data),
+      },
+      updateMask: { fieldPaths: Object.keys(friend.data) },
+    })),
+  ];
+  if (writes.length > 500) throw Object.assign(new Error("朋友筆數超過單次同步上限"), { status: 400, code: "TOO_MANY_WRITES" });
+  const response = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:commit`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ writes }),
+  });
+  if (!response.ok) {
+    const result: { error?: { status?: string; message?: string } } =
+      await response.json<{ error?: { status?: string; message?: string } }>().catch(() => ({}));
+    throw Object.assign(new Error(result.error?.message ?? "Unable to sync data"), {
+      status: response.status >= 500 ? 502 : response.status,
+      code: result.error?.status ?? "FIRESTORE_SYNC_FAILED",
+    });
+  }
 }
 
 async function customToken(env: Env, friendId: string) {
@@ -247,6 +363,16 @@ async function route(request: Request, env: Env) {
     }) });
   }
 
+  if (request.method === "POST" && url.pathname === "/admin/sync") {
+    await requireAdmin(request, env);
+    const body = await request.json<{ state?: unknown }>();
+    if (!body.state || typeof body.state !== "object" || Array.isArray(body.state)) {
+      return json({ error: "缺少可同步的後台資料", code: "INVALID_STATE" }, 400);
+    }
+    await syncAdminState(env, body.state as Record<string, unknown>);
+    return json({ ok: true });
+  }
+
   if (request.method === "GET" && statusMatch && validFriendId(statusMatch[1])) {
     return json({ status: await getStatus(env, statusMatch[1]) });
   }
@@ -328,7 +454,7 @@ export default {
         message: failure.message,
       }));
       const message = status >= 500 ? "服務暫時無法使用，請稍後再試" : failure.message;
-      return json({ error: message }, status, headers);
+      return json({ error: message, code: failure.code ?? "INTERNAL_ERROR" }, status, headers);
     }
   },
 };

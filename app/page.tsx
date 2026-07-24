@@ -8,7 +8,7 @@ import {
   UserRound, UsersRound, X, Pencil, Download, Database, Save, AlertTriangle, LogOut, LockKeyhole,
 } from "lucide-react";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, updatePassword } from "firebase/auth";
-import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, updateDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
 type GroupStatus = "待下單" | "待到貨" | "部分到貨" | "已到貨" | "出貨中" | "部分出貨" | "已出貨" | "已完成";
@@ -74,6 +74,11 @@ const earnedGifts = (group: Group, total: number) => group.giftRules.flatMap(rul
 const withoutUndefined = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const localStateKey = "hannna-purchase-admin-state-v1";
 const firestoreMillis = (value: unknown) => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
   if (value && typeof value === "object" && "toMillis" in value && typeof (value as { toMillis?: unknown }).toMillis === "function") {
     return (value as { toMillis: () => number }).toMillis();
   }
@@ -85,6 +90,15 @@ const readLocalState = (): LocalAdminState | null => {
     return parsed && typeof parsed.savedAt === "number" && Array.isArray(parsed.groups) ? parsed as LocalAdminState : null;
   } catch {
     return null;
+  }
+};
+const requestWithTimeout = async (input: RequestInfo | URL, init: RequestInit, timeoutMs = 20_000) => {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
   }
 };
 const friendAuthApi = process.env.NEXT_PUBLIC_FRIEND_AUTH_API?.replace(/\/$/, "") ?? "";
@@ -276,7 +290,15 @@ export default function Home() {
     const timer = window.setTimeout(() => {
       cloudSaveQueue.current = cloudSaveQueue.current.catch(() => undefined).then(async () => {
         try {
-          await setDoc(doc(db, "admin", "state"), { ...state, updatedAt: serverTimestamp() }, { merge: true });
+          if (!friendAuthApi || !auth.currentUser) throw Object.assign(new Error("Missing sync service"), { code: "sync-service-unavailable" });
+          const token = await auth.currentUser.getIdToken();
+          const response = await requestWithTimeout(`${friendAuthApi}/admin/sync`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
+            body: JSON.stringify({ state }),
+          });
+          const result = await response.json().catch(() => ({})) as { error?: string; code?: string };
+          if (!response.ok) throw Object.assign(new Error(result.error ?? "Cloud sync failed"), { code: result.code ?? `http-${response.status}` });
           if (saveNumber === latestSaveNumber.current) {
             setCloudSaveState("saved");
             setCloudSaveError("");
@@ -294,31 +316,6 @@ export default function Home() {
     }, 120);
     return () => window.clearTimeout(timer);
   }, [groups, friendList, payments, expenses, parcels, waybills, settings, isAuthenticated, dataLoaded]);
-
-  useEffect(() => {
-    if (!isAuthenticated || !dataLoaded) return;
-    const timer = window.setTimeout(() => {
-      friendList.forEach(friend => {
-        const friendOrders = groups.flatMap(group => {
-          const orders = group.orders.filter(order => order.friend === friend.name);
-          return orders.length ? [{ id: group.id, name: group.name, saleDate: group.saleDate, currency: group.currency, status: group.status, products: group.products, orders }] : [];
-        });
-        const orderIds = new Set(friendOrders.flatMap(group => group.orders.map(order => order.id)));
-        const publicWaybills = waybills.flatMap(waybill => {
-          const items = waybill.items.filter(item => orderIds.has(item.orderId));
-          return items.length ? [{ id: waybill.id, code: waybill.code, country: waybill.country, tracking: waybill.tracking, items, destination: waybill.destination, status: waybill.status, appliedDate: waybill.appliedDate, arrivedDate: waybill.arrivedDate }] : [];
-        });
-        const publicParcels = parcels.flatMap(parcel => {
-          const orderIdsForFriend = parcel.orderIds.filter(orderId => orderIds.has(orderId));
-          return orderIdsForFriend.length ? [{ id: parcel.id, code: parcel.code, orderIds: orderIdsForFriend, method: parcel.method, shippingFee: parcel.shippingFee, tracking: parcel.tracking, date: parcel.date, status: parcel.status }] : [];
-        });
-        const publicPayments = payments.filter(record => record.friend === friend.name).map(({ id, amount, date, method, orderIds: paidOrderIds }) => ({ id, amount, date, method, orderIds: paidOrderIds }));
-        void setDoc(doc(db, "friendViews", String(friend.id)), withoutUndefined({ friendId: friend.id, authUid: `friend-${friend.id}`, name: friend.name, portalNote: friend.portalNote ?? "", groups: friendOrders, payments: publicPayments, waybills: publicWaybills, parcels: publicParcels, updatedAt: new Date().toISOString() }), { merge: true })
-          .catch(() => showNotice("朋友端資料同步失敗，請稍後再試"));
-      });
-    }, 700);
-    return () => window.clearTimeout(timer);
-  }, [groups, friendList, payments, parcels, waybills, isAuthenticated, dataLoaded]);
 
   const selectedGroup = groups.find(group => group.id === selectedGroupId) ?? null;
   const visibleGroups = useMemo(() => groups.filter(group =>
