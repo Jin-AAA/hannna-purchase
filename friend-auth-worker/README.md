@@ -4,9 +4,10 @@ This Cloudflare Worker is the privileged boundary between the admin site and Fir
 
 ## Routes
 
-- `GET /friends/:friendId/status`
 - `GET /friends`
-- `POST /friends/:friendId/setup`
+- `POST /friends/:friendId/login`（連續錯誤 5 次鎖定 15 分鐘）
+- `POST /admin/sync`（含版本檢查）
+- `DELETE /admin/friends/:friendId`
 - `POST /friends/:friendId/password`
 - `POST /friends/:friendId/last-login`
 - `POST /admin/friends/:friendId/password`

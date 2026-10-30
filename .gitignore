@@ -41,3 +41,8 @@ next-env.d.ts
 /.sites-runtime/
 /outputs/
 /work/
+
+# 子專案的套件與建置輸出
+node_modules/
+dist/
+*.tsbuildinfo
