@@ -1,25 +1,25 @@
 /* 哈娜的小車車：後台樣式
-   冷灰紙面、深松綠作為唯一主色；數字等寬對齊；
+   灰白底、藍色作為唯一主色；數字等寬對齊；
    視覺重點只有一個：訂單的五段進度刻度。 */
 
 :root {
-  --paper: #f3f4f1;
+  --paper: #f4f5f7;
   --surface: #ffffff;
-  --sunken: #f7f8f6;
-  --ink: #18211e;
-  --ink-2: #3f4a46;
-  --muted: #727d78;
-  --faint: #a3aca8;
-  --line: #e1e4df;
-  --line-strong: #c9cfc9;
-  --pine: #1e5c4f;
-  --pine-ink: #164539;
-  --pine-soft: #e3eeea;
+  --sunken: #f8f9fb;
+  --ink: #1b1f27;
+  --ink-2: #444b57;
+  --muted: #6c7381;
+  --faint: #a3a9b4;
+  --line: #e3e6eb;
+  --line-strong: #cbd1da;
+  --pine: #2f5fd0;
+  --pine-ink: #2149a8;
+  --pine-soft: #e8eefc;
   --red: #a63a2c;   --red-soft: #f8e8e4;
   --amber: #8f5a07; --amber-soft: #f8eedb;
   --green: #276a45; --green-soft: #e2f0e7;
-  --blue: #2c5597;  --blue-soft: #e6ecf7;
-  --gray-soft: #eceeea;
+  --blue: #1d6c99;  --blue-soft: #e2f0f7;
+  --gray-soft: #eceef2;
   --radius: 6px;
   --radius-lg: 10px;
   --font: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
@@ -65,8 +65,8 @@ h1, h2, h3, p { margin: 0; }
 
 .input { height: 34px; width: 100%; min-width: 0; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); outline: none; transition: border-color .12s, box-shadow .12s; }
 textarea.input { height: auto; padding: 8px 10px; resize: vertical; line-height: 1.6; }
-select.input { padding-right: 28px; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23727d78' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
-.input:focus { border-color: var(--pine); box-shadow: 0 0 0 3px rgba(30, 92, 79, .14); }
+select.input { padding-right: 28px; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236c7381' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
+.input:focus { border-color: var(--pine); box-shadow: 0 0 0 3px rgba(47, 95, 208, .16); }
 .input:disabled { background: var(--sunken); color: var(--faint); }
 .input.num { text-align: right; }
 .input.search { width: 220px; }
@@ -155,7 +155,7 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 .table td strong { font-weight: 650; }
 .table td small { display: block; margin-top: 1px; font-size: 12px; color: var(--muted); font-weight: 400; white-space: normal; }
 .table tr.clickable { cursor: pointer; }
-.table tr.clickable:hover td { background: #fafbf9; }
+.table tr.clickable:hover td { background: #f9fafc; }
 .table tbody.expanded > tr:first-child td { background: var(--sunken); border-bottom-color: transparent; }
 .table tr.sub-row td { background: var(--sunken); padding-top: 7px; padding-bottom: 7px; font-size: 13px; }
 .table tr.sub-row td:first-child { padding-left: 30px; }
@@ -165,7 +165,7 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 .rows { list-style: none; margin: 0; padding: 0; }
 .rows li + li { border-top: 1px solid var(--line); }
 .row-btn { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 16px; border: 0; background: none; text-align: left; font-weight: 600; }
-.row-btn:hover { background: #fafbf9; }
+.row-btn:hover { background: #f9fafc; }
 
 .empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 36px 20px; text-align: center; color: var(--muted); }
 .empty strong { color: var(--ink-2); font-size: 14.5px; }
@@ -221,7 +221,7 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 .banner { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 12px 16px; border-radius: var(--radius-lg); border: 1px solid; }
 .banner p { color: var(--ink-2); font-size: 13px; margin-top: 2px; }
 .banner-warn { background: var(--amber-soft); border-color: #ead7b0; }
-.banner-info { background: var(--pine-soft); border-color: #c8ddd5; }
+.banner-info { background: var(--pine-soft); border-color: #cad7f5; }
 .banner-actions { display: flex; gap: 8px; }
 .main > .banner { margin: 16px 32px 0; }
 
@@ -233,11 +233,11 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 
 .segmented { display: inline-flex; padding: 2px; border-radius: 7px; background: var(--gray-soft); }
 .segmented button { height: 28px; padding: 0 12px; border: 0; border-radius: 5px; background: transparent; color: var(--ink-2); font-weight: 600; font-size: 13px; }
-.segmented button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(24, 33, 30, .12); }
+.segmented button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(20, 26, 38, .12); }
 
 /* ---------- 側邊抽屜與對話框 ---------- */
-.drawer-layer, .dialog-layer { position: fixed; inset: 0; z-index: 60; background: rgba(24, 33, 30, .32); }
-.drawer { position: absolute; inset: 0 0 0 auto; width: min(560px, 100%); display: flex; flex-direction: column; background: var(--surface); box-shadow: -12px 0 40px rgba(24, 33, 30, .16); animation: drawer-in .18s ease-out; }
+.drawer-layer, .dialog-layer { position: fixed; inset: 0; z-index: 60; background: rgba(20, 26, 38, .32); }
+.drawer { position: absolute; inset: 0 0 0 auto; width: min(560px, 100%); display: flex; flex-direction: column; background: var(--surface); box-shadow: -12px 0 40px rgba(20, 26, 38, .16); animation: drawer-in .18s ease-out; }
 .drawer.wide { width: min(760px, 100%); }
 @keyframes drawer-in { from { transform: translateX(24px); opacity: .6; } }
 .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 22px 14px; border-bottom: 1px solid var(--line); }
@@ -247,7 +247,7 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 .drawer-foot { display: flex; align-items: center; gap: 8px; padding: 12px 22px; border-top: 1px solid var(--line); background: var(--sunken); }
 
 .dialog-layer { display: grid; place-items: center; padding: 20px; }
-.dialog { width: min(440px, 100%); padding: 22px; border-radius: var(--radius-lg); background: var(--surface); box-shadow: 0 20px 60px rgba(24, 33, 30, .24); animation: dialog-in .14s ease-out; }
+.dialog { width: min(440px, 100%); padding: 22px; border-radius: var(--radius-lg); background: var(--surface); box-shadow: 0 20px 60px rgba(20, 26, 38, .24); animation: dialog-in .14s ease-out; }
 @keyframes dialog-in { from { transform: scale(.98); opacity: 0; } }
 .dialog h2 { font-size: 16.5px; font-weight: 700; }
 .dialog-body { margin-top: 10px; color: var(--ink-2); display: flex; flex-direction: column; gap: 6px; }
@@ -299,7 +299,7 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 .pick-group h3 { font-size: 13px; font-weight: 700; color: var(--ink-2); margin-bottom: 6px; }
 .pick-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px 132px; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); }
 .pick-row + .pick-row { margin-top: 6px; }
-.pick-row.on { border-color: var(--pine); background: #f8fbfa; }
+.pick-row.on { border-color: var(--pine); background: #f5f8ff; }
 .pick-main { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; min-width: 0; }
 .pick-main > span, .check-row > span { display: flex; flex-direction: column; min-width: 0; }
 .pick-main small, .check-row small { font-size: 12px; color: var(--muted); }
@@ -309,7 +309,7 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 
 .check-list { display: flex; flex-direction: column; gap: 6px; }
 .check-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
-.check-row:has(input:checked) { border-color: var(--pine); background: #f8fbfa; }
+.check-row:has(input:checked) { border-color: var(--pine); background: #f5f8ff; }
 .check-row.disabled { cursor: default; opacity: .7; }
 
 .alloc-list { display: flex; flex-direction: column; gap: 6px; }
@@ -327,7 +327,7 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 .issued strong { font-size: 24px; letter-spacing: .12em; color: var(--pine-ink); }
 .issued small { color: var(--ink-2); font-size: 12px; }
 
-.toast { position: fixed; z-index: 80; left: 50%; top: 16px; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 10px 16px; border-radius: var(--radius); background: var(--ink); color: #fff; font-weight: 600; font-size: 13.5px; box-shadow: 0 8px 28px rgba(24, 33, 30, .25); animation: toast-in .18s ease-out; }
+.toast { position: fixed; z-index: 80; left: 50%; top: 16px; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 10px 16px; border-radius: var(--radius); background: var(--ink); color: #fff; font-weight: 600; font-size: 13.5px; box-shadow: 0 8px 28px rgba(20, 26, 38, .25); animation: toast-in .18s ease-out; }
 @keyframes toast-in { from { transform: translate(-50%, -8px); opacity: 0; } }
 
 /* ---------- 登入與啟動 ---------- */
@@ -349,9 +349,9 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 }
 @media (max-width: 860px) {
   .sidebar { transform: translateX(-100%); transition: transform .2s ease; box-shadow: none; width: 248px; }
-  .sidebar.open { transform: none; box-shadow: 12px 0 40px rgba(24, 33, 30, .18); }
+  .sidebar.open { transform: none; box-shadow: 12px 0 40px rgba(20, 26, 38, .18); }
   .sidebar-close { display: inline-grid; }
-  .scrim { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(24, 33, 30, .3); }
+  .scrim { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(20, 26, 38, .3); }
   .main { margin-left: 0; }
   .mobile-bar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
   .mobile-bar strong { flex: 1; font-size: 15px; }

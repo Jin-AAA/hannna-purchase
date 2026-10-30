@@ -1,9 +1,9 @@
 :root {
-  --paper: #f3f4f1; --surface: #fff; --sunken: #f7f8f6;
-  --ink: #18211e; --ink-2: #3f4a46; --muted: #727d78; --faint: #a3aca8;
-  --line: #e1e4df; --line-strong: #c9cfc9;
-  --pine: #1e5c4f; --pine-ink: #164539; --pine-soft: #e3eeea;
-  --red: #a63a2c; --red-soft: #f8e8e4; --amber: #8f5a07; --amber-soft: #f8eedb; --green: #276a45; --green-soft: #e2f0e7; --gray-soft: #eceeea;
+  --paper: #f4f5f7; --surface: #fff; --sunken: #f8f9fb;
+  --ink: #1b1f27; --ink-2: #444b57; --muted: #6c7381; --faint: #a3a9b4;
+  --line: #e3e6eb; --line-strong: #cbd1da;
+  --pine: #2f5fd0; --pine-ink: #2149a8; --pine-soft: #e8eefc;
+  --red: #a63a2c; --red-soft: #f8e8e4; --amber: #8f5a07; --amber-soft: #f8eedb; --green: #276a45; --green-soft: #e2f0e7; --gray-soft: #eceef2;
   font: 15px/1.6 -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
@@ -36,8 +36,8 @@ h1, h2, p { margin: 0; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > span { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .field input, .field select { height: 46px; width: 100%; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); outline: none; font-size: 16px; }
-.field select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23727d78' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; }
-.field input:focus, .field select:focus { border-color: var(--pine); box-shadow: 0 0 0 3px rgba(30, 92, 79, .14); }
+.field select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236c7381' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; }
+.field input:focus, .field select:focus { border-color: var(--pine); box-shadow: 0 0 0 3px rgba(47, 95, 208, .16); }
 .field input:disabled, .field select:disabled { background: var(--sunken); }
 .error { padding: 10px 12px; border-radius: 8px; background: var(--red-soft); color: var(--red); font-size: 14px; }
 .ok { padding: 10px 12px; border-radius: 8px; background: var(--green-soft); color: var(--green); font-size: 14px; }
@@ -67,7 +67,7 @@ h1, h2, p { margin: 0; }
 
 .tabs { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--gray-soft); }
 .tabs button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-2); font-weight: 600; font-size: 14px; }
-.tabs button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(24, 33, 30, .12); }
+.tabs button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(20, 26, 38, .12); }
 .tabs b { font-size: 12px; color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .orders { display: flex; flex-direction: column; gap: 12px; }
@@ -116,7 +116,7 @@ h1, h2, p { margin: 0; }
 .empty { padding: 36px 16px; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--line-strong); border-radius: 12px; }
 .foot { text-align: center; font-size: 12.5px; color: var(--faint); }
 
-.sheet-layer { position: fixed; inset: 0; z-index: 30; display: grid; place-items: end center; background: rgba(24, 33, 30, .32); }
+.sheet-layer { position: fixed; inset: 0; z-index: 30; display: grid; place-items: end center; background: rgba(20, 26, 38, .32); }
 .sheet { width: min(440px, 100%); display: flex; flex-direction: column; gap: 14px; padding: 22px 20px calc(20px + env(safe-area-inset-bottom)); border-radius: 16px 16px 0 0; background: var(--surface); animation: up .18s ease-out; }
 .sheet h2 { font-size: 18px; }
 .sheet-actions { display: flex; justify-content: flex-end; gap: 8px; }
